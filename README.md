@@ -29,10 +29,6 @@ npm test
 
 扩展技能依赖 VS Code Agent Skills 支持；VS Code 1.108 首次提供该能力且当时需要启用 `chat.useAgentSkills`。建议使用较新的 VS Code 版本。
 
-## 打包与发布
+## 反馈与贡献
 
-1. 将 `package.json` 中的 `publisher` 替换为已在 Visual Studio Marketplace 注册的发布者 ID。
-2. 根据实际发布授权添加许可证文件，并在 `package.json` 中填写对应许可证标识。
-3. 根据发布信息补充扩展图标。
-4. 运行 `npm run package` 生成 `.vsix` 安装包。
-5. 按照 [发布扩展指南](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) 登录发布者账号并发布。
+如在使用过程中遇到问题或有改进建议，请在 GitHub 仓库中提交 issue 或 pull request。欢迎社区贡献创作 Prompt、技能和示例。
