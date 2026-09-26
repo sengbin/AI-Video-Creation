@@ -82,6 +82,8 @@ suite('AI 视频创作工具扩展', () => {
 
     for (const contribution of contributedPaths) {
       assert.ok(fs.existsSync(path.join(extensionRoot, contribution.path)));
+      assert.strictEqual('name' in contribution, false);
+      assert.strictEqual('description' in contribution, false);
     }
 
     const imagePromptWorkflows = [
@@ -179,14 +181,19 @@ suite('AI 视频创作工具扩展', () => {
     const agentContent = fs.readFileSync(agentPath, 'utf8');
     const agentFrontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(agentContent);
     assert.ok(agentFrontmatter);
-    assert.strictEqual(parseYaml(agentFrontmatter[1]).name, 'AI 视频创作（扩展）智能体');
+    const agentMetadata = parseYaml(agentFrontmatter[1]);
+    assert.strictEqual(agentMetadata.name, 'AI 视频创作（扩展）智能体');
+    assert.ok(agentMetadata.description);
     assert.ok(agentContent.includes('如果当前会话未加载该 Skill 或无法使用其规则，立即停止；不得调用参数表单工具或继续生成'));
 
     const skillPath = path.join(extensionRoot, contributions.chatSkills[0].path);
     const skillContent = fs.readFileSync(skillPath, 'utf8');
     const skillFrontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(skillContent);
     assert.ok(skillFrontmatter);
-    assert.strictEqual(parseYaml(skillFrontmatter[1]).name, 'ai-video-prompt-design');
+    const skillMetadata = parseYaml(skillFrontmatter[1]);
+    assert.strictEqual(skillMetadata.name, 'ai-video-prompt-design');
+    assert.strictEqual(path.basename(path.dirname(skillPath)), skillMetadata.name);
+    assert.ok(skillMetadata.description);
     assert.ok(skillContent.includes('拍摄脚本生成提示词结构'));
 
     const promptTools = [
@@ -207,6 +214,8 @@ suite('AI 视频创作工具扩展', () => {
       const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(promptContent);
       assert.ok(frontmatter);
       const metadata = parseYaml(frontmatter[1]);
+      assert.ok(metadata.name);
+      assert.ok(metadata.description);
       assert.strictEqual(metadata.agent, 'AI 视频创作（扩展）智能体');
       assert.strictEqual(metadata.tools, undefined);
       assert.ok(promptContent.includes(`必须调用一次 \`${toolName}\``));
