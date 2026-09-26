@@ -1,0 +1,215 @@
+{
+  "name": "ai-video-creation-tools",
+  "displayName": "AI 视频创作工具",
+  "description": "为 AI 视频创作提供工作流支持。",
+  "version": "0.0.1",
+  "icon": "logo.png",
+  "publisher": "chengbin",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sengbin/AI-Video-Creation.git",
+    "directory": "AI-Video-Creation-Extension"
+  },
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "AI",
+    "video-creation",
+    "story"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguageModelTool:ai-video-creation-tools_collect_story_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_image_story_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_novel_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_screenplay_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_shooting_script_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_character_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_scene_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_prop_parameters",
+    "onLanguageModelTool:ai-video-creation-tools_collect_effect_parameters"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "path": "./copilot-customizations/agents/AI 视频创作.agent.md"
+      }
+    ],
+    "chatSkills": [
+      {
+        "path": "./copilot-customizations/skills/ai-video-prompt-design/SKILL.md"
+      }
+    ],
+    "chatPromptFiles": [
+      {
+        "path": "./copilot-customizations/prompts/创意写故事.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/图片写故事.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/小说重创作.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/剧本创作.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/拍摄脚本制作.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/角色生成.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/场景生成.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/道具生成.prompt.md"
+      },
+      {
+        "path": "./copilot-customizations/prompts/特效生成.prompt.md"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "ai-video-creation-tools_collect_story_parameters",
+        "displayName": "收集创意写故事参数",
+        "modelDescription": "在创意写故事 Prompt 中调用。打开同屏表单收集创意主题、题材、目标时长或集数、风格限制和输出内容，提交后把用户填写内容返回给模型。所有字段可留空。",
+        "userDescription": "打开创意写故事参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_story_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_image_story_parameters",
+        "displayName": "收集图片写故事参数",
+        "modelDescription": "在图片写故事 Prompt 中调用。打开同屏表单收集题材、目标时长或集数、画面约束和输出内容。图片由用户作为聊天附件提供，不由此工具收集。所有文本字段可留空。",
+        "userDescription": "打开图片写故事参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_image_story_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_novel_parameters",
+        "displayName": "收集小说改编参数",
+        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集改编目标、时长或集数、保留或调整要求、风格限制和输出内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。所有文本字段可留空。",
+        "userDescription": "打开小说改编参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_novel_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_screenplay_parameters",
+        "displayName": "收集剧本创作参数",
+        "modelDescription": "在剧本创作 Prompt 中调用。打开同屏表单收集故事或原作材料、剧本形态、时长、人物、冲突、保留项和交付要求，用于编写下游模型的剧本创作提示词。所有字段可留空。",
+        "userDescription": "打开剧本创作参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_screenplay_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_shooting_script_parameters",
+        "displayName": "收集拍摄脚本参数",
+        "modelDescription": "在拍摄脚本制作 Prompt 中调用。打开同屏表单收集故事或剧本依据、目标时长、画幅、镜头节奏、连续性、声音和视频生成模型要求，用于编写逐镜头拍摄脚本及图生视频提示词的下游生成指令。所有字段可留空。",
+        "userDescription": "打开拍摄脚本制作参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_shooting_script_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_character_parameters",
+        "displayName": "收集角色生成参数",
+        "modelDescription": "在角色生成 Prompt 中调用。打开同屏表单收集角色类型、外观、身体结构、装束、姿态、构图及画面要求，用于生成角色参考图提示词。所有字段可留空。",
+        "userDescription": "打开角色生成参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_character_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_scene_parameters",
+        "displayName": "收集场景生成参数",
+        "modelDescription": "在场景生成 Prompt 中调用。打开同屏表单收集地点类型、时代地域、空间结构、时间天气、光线氛围及视觉风格，用于生成场景参考图提示词。所有字段可留空。",
+        "userDescription": "打开场景生成参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_scene_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_prop_parameters",
+        "displayName": "收集道具生成参数",
+        "modelDescription": "在道具生成 Prompt 中调用。打开同屏表单收集道具名称、时代、尺寸、材质、颜色、结构、能力、状态及视觉风格，用于生成道具参考图提示词。所有字段可留空。",
+        "userDescription": "打开道具生成参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_prop_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      },
+      {
+        "name": "ai-video-creation-tools_collect_effect_parameters",
+        "displayName": "收集特效生成参数",
+        "modelDescription": "在特效生成 Prompt 中调用。打开同屏表单收集特效来源、触发条件、位置范围、视觉形态、运动、持续时间、环境交互及视觉风格，用于生成特效参考图提示词。所有字段可留空。",
+        "userDescription": "打开特效生成参数表单",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "video_creation_effect_parameters",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": { "not": {} }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.15.30",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "mocha": "^11.7.1",
+    "typescript": "^5.8.3",
+    "yaml": "^2.8.1"
+  }
+}
