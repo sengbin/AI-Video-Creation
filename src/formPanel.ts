@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { FormField, FormValues, FormWorkflow } from './formWorkflows';
 
+const CUSTOM_OPTION_VALUE = '__custom__';
+
 export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken
@@ -76,7 +78,8 @@ function readFormValues(value: unknown, fields: readonly FormField[]): FormValue
   if (actualNames.length !== expectedNames.length ||
       expectedNames.some((name) => typeof value[name] !== 'string') ||
       actualNames.some((name) => !expectedNames.includes(name)) ||
-      fields.some((field) => field.options && value[field.name] !== '' && !field.options.includes(value[field.name] as string))) {
+      fields.some((field) => field.options && !field.allowCustom && value[field.name] !== '' && !field.options.includes(value[field.name] as string)) ||
+      fields.some((field) => field.allowCustom && value[field.name] === CUSTOM_OPTION_VALUE)) {
     return undefined;
   }
 
@@ -122,7 +125,17 @@ function createFormHtml(webview: vscode.Webview, workflow: FormWorkflow): string
       border-radius: 3px; font: inherit; line-height: 1.45;
     }
     select { min-height: 38px; resize: none; }
-    textarea:focus, select:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .select-with-custom { display: flex; width: 100%; min-width: 0; gap: 8px; }
+    .select-with-custom select { flex: 1 1 100%; min-width: 0; }
+    .select-with-custom.has-custom select { flex: 0 1 auto; max-width: 55%; }
+    .custom-option {
+      flex: 1 1 0; min-width: 0; padding: 9px 10px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 3px; font: inherit; line-height: 1.45;
+    }
+    .custom-option[hidden] { display: none; }
+    textarea:focus, select:focus, .custom-option:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
     .actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
     button { min-height: 30px; padding: 5px 13px; border: 0; border-radius: 3px; font: inherit; cursor: pointer; }
@@ -157,9 +170,44 @@ function createFormHtml(webview: vscode.Webview, workflow: FormWorkflow): string
     const submitButton = document.getElementById('submit');
     const status = document.getElementById('status');
 
+    document.querySelectorAll('[data-custom-input]').forEach((select) => {
+      const customInput = document.getElementById(select.dataset.customInput);
+      const wrapper = select.closest('.select-with-custom');
+      const updateCustomInput = () => {
+        const isCustom = select.value === '${CUSTOM_OPTION_VALUE}';
+        customInput.hidden = !isCustom;
+        customInput.disabled = !isCustom;
+        customInput.required = isCustom;
+        wrapper.classList.toggle('has-custom', isCustom);
+        if (isCustom) {
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (context) {
+            context.font = getComputedStyle(select).font;
+            const textWidth = context.measureText(select.selectedOptions[0].textContent).width;
+            select.style.width = \`\${Math.ceil(textWidth + 42)}px\`;
+          }
+        } else {
+          select.style.width = '';
+        }
+      };
+
+      select.addEventListener('change', updateCustomInput);
+      updateCustomInput();
+    });
+
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      const values = Object.fromEntries(new FormData(form).entries());
+      const formData = new FormData(form);
+      const values = Object.fromEntries(
+        [...formData.entries()].filter(([name]) => !name.endsWith('__custom'))
+      );
+      document.querySelectorAll('[data-custom-input]').forEach((select) => {
+        if (select.value === '${CUSTOM_OPTION_VALUE}') {
+          const customInput = document.getElementById(select.dataset.customInput);
+          values[select.name] = customInput.value;
+        }
+      });
       submitButton.disabled = true;
       status.textContent = '';
       vscode.postMessage({ command: 'submit', values });
@@ -186,10 +234,14 @@ function renderField(field: FormField): string {
   const description = escapeHtml(field.description);
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
   const control = field.options
-    ? `<select id="${name}" name="${name}">
+    ? `<div class="select-with-custom">
+        <select id="${name}" name="${name}"${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
           <option value="">请选择</option>
           ${field.options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}
-        </select>`
+          ${field.allowCustom ? `<option value="${CUSTOM_OPTION_VALUE}">其他</option>` : ''}
+        </select>
+        ${field.allowCustom ? `<input class="custom-option" id="${name}-custom" name="${name}__custom" type="text" placeholder="输入自定义内容" disabled hidden>` : ''}
+      </div>`
     : `<textarea id="${name}" name="${name}"${placeholder} rows="1" spellcheck="true"></textarea>`;
 
   return `<div class="field">

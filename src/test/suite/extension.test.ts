@@ -103,6 +103,36 @@ suite('AI 视频创作工具扩展', () => {
       characterWorkflow.fields.find((field) => field.name === 'characterType')?.options,
       ['人类', '动物', '怪物', '丧尸', '其他']
     );
+    assert.deepStrictEqual(
+      characterWorkflow.fields.find((field) => field.name === 'composition')?.options,
+      ['正面全身像', '三视图（正面、侧面、背面）', '正面半身像', '侧面全身像', '面部特写']
+    );
+    assert.strictEqual(characterWorkflow.fields.find((field) => field.name === 'composition')?.allowCustom, true);
+    assert.deepStrictEqual(
+      characterWorkflow.fields.find((field) => field.name === 'style')?.options,
+      ['写实电影风格', '写实摄影', '2D动漫插画', '3D动画风格', '游戏概念设计', '水彩插画', '黑白线稿']
+    );
+    assert.deepStrictEqual(
+      characterWorkflow.fields.find((field) => field.name === 'background')?.options,
+      ['纯白背景', '浅灰纯色背景', '纯色背景', '简洁渐变背景', '与角色设定相符的环境背景']
+    );
+
+    const shootingScriptWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_shooting_script_parameters');
+    assert.ok(shootingScriptWorkflow);
+    assert.deepStrictEqual(
+      shootingScriptWorkflow.fields.find((field) => field.name === 'visualStyle')?.options,
+      ['写实电影风格', '写实摄影', '2D动漫插画', '3D动画风格', '游戏概念设计', '水彩插画', '黑白线稿']
+    );
+    assert.deepStrictEqual(
+      shootingScriptWorkflow.fields.find((field) => field.name === 'cameraStyle')?.options,
+      ['固定机位（稳定中近景）', '缓慢推近', '缓慢拉远', '横向摇摄', '跟随移动镜头', '手持纪实感', '低机位仰拍', '俯拍全景', '浅景深特写']
+    );
+    assert.strictEqual(shootingScriptWorkflow.fields.find((field) => field.name === 'cameraStyle')?.allowCustom, true);
+
+    const customizableFields = formWorkflows.flatMap((workflow) => workflow.fields)
+      .filter((field) => field.allowCustom);
+    assert.ok(customizableFields.length > 0);
+    assert.ok(customizableFields.every((field) => Boolean(field.options)));
 
     assert.ok(formWorkflows.every((workflow) => workflow.fields
       .filter((field) => !field.options)
