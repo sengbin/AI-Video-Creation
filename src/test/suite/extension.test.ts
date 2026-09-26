@@ -1,11 +1,48 @@
 import assert from 'assert';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { parse as parseYaml } from 'yaml';
+import { PromptDatabase } from '../../database';
 import { formWorkflows } from '../../formWorkflows';
 
 suite('AI 视频创作工具扩展', () => {
+  test('首次打开时创建用户级数据库并保存动态模板记录', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-db-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    let database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+
+    try {
+      const record = database.saveRecord({
+        categoryId: 'ai-video-creation-tools_collect_story_parameters',
+        categoryName: '创意写故事',
+        schema: [{ id: 'genre', label: '题材', type: 'text' }],
+        data: { genre: '科幻' }
+      });
+
+      assert.ok(fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
+      assert.deepStrictEqual(database.getRecord(record.id), record);
+      assert.deepStrictEqual(
+        database.listRecords('ai-video-creation-tools_collect_story_parameters'),
+        [record]
+      );
+      assert.deepStrictEqual(
+        database.listRecords('ai-video-creation-tools_collect_novel_parameters'),
+        []
+      );
+
+      database.dispose();
+      database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+      assert.deepStrictEqual(database.getRecord(record.id), record);
+      assert.strictEqual(database.deleteRecord(record.id), true);
+      assert.strictEqual(database.getRecord(record.id), undefined);
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('能够激活扩展并注册九个参数表单工具', async () => {
     const extension = vscode.extensions.getExtension('chengbin.ai-video-creation-tools');
 

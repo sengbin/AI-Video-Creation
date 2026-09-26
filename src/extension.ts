@@ -1,7 +1,7 @@
 /*
 ------------------------------------------------------------------------
 名称：AI 视频创作工具扩展入口
-说明：注册扩展生命周期与基础测试命令，后续在此接入创作表单工具。
+说明：初始化用户级数据库并注册创作参数表单工具。
 作者：Lion
 邮箱：chengbin@3578.cn
 日期：2026-09-24
@@ -10,14 +10,18 @@
 */
 
 import * as vscode from 'vscode';
+import { PromptDatabase } from './database';
 import { formWorkflows } from './formWorkflows';
 import { WorkflowFormTool } from './workflowFormTool';
 
 /**
- * 激活扩展并注册用于验证扩展运行状态的命令。
+ * 激活扩展、初始化用户级数据库并注册创作参数表单工具。
  * @param context VS Code 扩展上下文。
  */
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const database = await PromptDatabase.open(context.globalStorageUri);
+  context.subscriptions.push(database);
+
   context.subscriptions.push(
     ...formWorkflows.map((workflow) =>
       vscode.lm.registerTool(workflow.toolName, new WorkflowFormTool(workflow))
