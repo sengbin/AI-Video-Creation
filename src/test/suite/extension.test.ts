@@ -62,31 +62,31 @@ suite('AI 视频创作工具扩展', () => {
 
     const expectedFieldNames: Readonly<Record<string, readonly string[]>> = {
       'ai-video-creation-tools_collect_story_parameters': [
-        'idea', 'theme', 'genre', 'duration', 'episodeCount', 'era', 'characterCount', 'style', 'ending', 'boundaries', 'deliverable', 'phase'
+        'idea', 'genre', 'duration', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_image_story_parameters': [
-        'genre', 'duration', 'episodeCount', 'protagonist', 'relationships', 'storyType', 'tone', 'ending', 'visualElements', 'deliverable', 'phase', 'imageOrder', 'imageRelationships'
+        'genre', 'duration', 'visualElements', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_novel_parameters': [
-        'target', 'scope', 'positioning', 'style', 'preserve', 'adjustments', 'ending', 'deliverable', 'phase'
+        'target', 'scope', 'preserve', 'adjustments', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_screenplay_parameters': [
-        'sourceMaterial', 'format', 'genre', 'duration', 'audience', 'theme', 'characters', 'coreConflict', 'mustKeep', 'allowedChanges', 'tone', 'ending', 'deliverable', 'boundaries'
+        'sourceMaterial', 'format', 'genre', 'duration', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
-        'scriptSource', 'duration', 'aspectRatio', 'shotCount', 'shotDuration', 'visualStyle', 'cameraStyle', 'continuity', 'audio', 'generationModel', 'deliverable', 'constraints'
+        'scriptSource', 'duration', 'aspectRatio', 'visualStyle', 'cameraStyle', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_character_parameters': [
-        'name', 'characterType', 'age', 'gender', 'appearance', 'body', 'hairstyle', 'clothing', 'distinctiveFeatures', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'toolLimits'
+        'characterType', 'appearance', 'clothing', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_scene_parameters': [
-        'placeType', 'era', 'region', 'spaceSize', 'layout', 'entrances', 'fixtures', 'time', 'weather', 'light', 'atmosphere', 'style', 'aspectRatio', 'toolLimits'
+        'placeType', 'layout', 'environment', 'composition', 'style', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_prop_parameters': [
-        'propName', 'era', 'size', 'material', 'color', 'structure', 'ability', 'state', 'style', 'toolLimits'
+        'propName', 'appearance', 'state', 'composition', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_effect_parameters': [
-        'source', 'trigger', 'location', 'duration', 'movementDirection', 'range', 'color', 'brightness', 'form', 'intensity', 'environmentInteraction', 'cameraView', 'style', 'toolLimits'
+        'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'additionalInfo'
       ]
     };
 
@@ -94,6 +94,7 @@ suite('AI 视频创作工具扩展', () => {
       const workflow = formWorkflows.find((item) => item.toolName === toolName);
       assert.ok(workflow);
       assert.deepStrictEqual(workflow.fields.map((field) => field.name), fieldNames);
+      assert.ok(workflow.fields.some((field) => field.name === 'additionalInfo'));
     }
 
     const characterWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_character_parameters');
@@ -147,6 +148,7 @@ suite('AI 视频创作工具扩展', () => {
       assert.ok(promptContent.includes(domainInstructionsHeading));
       assert.ok(!promptContent.includes('ai-video-prompt-design'));
       assert.ok(promptContent.includes('代码块'));
+      assert.ok(promptContent.includes('补充要求'));
       if (promptName === '角色生成.prompt.md') {
         assert.ok(promptContent.includes('角色类型和主体'));
         assert.ok(promptContent.includes('丧尸的腐坏特征'));
