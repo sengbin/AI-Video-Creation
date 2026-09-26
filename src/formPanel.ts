@@ -5,7 +5,8 @@ const CUSTOM_OPTION_VALUE = '__custom__';
 
 export function collectFormValues(
   workflow: FormWorkflow,
-  token: vscode.CancellationToken
+  token: vscode.CancellationToken,
+  initialValues: FormValues = {}
 ): Promise<FormValues | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
@@ -21,7 +22,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(panel.webview, workflow);
+  panel.webview.html = createFormHtml(panel.webview, workflow, initialValues);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -78,6 +79,7 @@ function readFormValues(value: unknown, fields: readonly FormField[]): FormValue
   if (actualNames.length !== expectedNames.length ||
       expectedNames.some((name) => typeof value[name] !== 'string') ||
       actualNames.some((name) => !expectedNames.includes(name)) ||
+      fields.some((field) => field.required && !(value[field.name] as string).trim()) ||
       fields.some((field) => field.options && !field.allowCustom && value[field.name] !== '' && !field.options.includes(value[field.name] as string)) ||
       fields.some((field) => field.allowCustom && value[field.name] === CUSTOM_OPTION_VALUE)) {
     return undefined;
@@ -90,9 +92,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function createFormHtml(webview: vscode.Webview, workflow: FormWorkflow): string {
+function createFormHtml(
+  webview: vscode.Webview,
+  workflow: FormWorkflow,
+  initialValues: FormValues
+): string {
   const nonce = createNonce();
-  const fields = workflow.fields.map((field) => renderField(field)).join('');
+  const fields = workflow.fields.map((field) =>
+    renderField(field, initialValues[field.name] ?? '')
+  ).join('');
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -228,21 +236,22 @@ function createFormHtml(webview: vscode.Webview, workflow: FormWorkflow): string
 </html>`;
 }
 
-function renderField(field: FormField): string {
+function renderField(field: FormField, initialValue: string): string {
   const name = escapeHtml(field.name);
   const label = escapeHtml(field.label);
   const description = escapeHtml(field.description);
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
+  const required = field.required ? ' required' : '';
   const control = field.options
     ? `<div class="select-with-custom">
-        <select id="${name}" name="${name}"${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
-          <option value="">请选择</option>
-          ${field.options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}
-          ${field.allowCustom ? `<option value="${CUSTOM_OPTION_VALUE}">其他</option>` : ''}
+        <select id="${name}" name="${name}"${required}${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
+          <option value=""${initialValue === '' ? ' selected' : ''}>请选择</option>
+          ${field.options.map((option) => `<option value="${escapeHtml(option)}"${initialValue === option ? ' selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+          ${field.allowCustom ? `<option value="${CUSTOM_OPTION_VALUE}"${initialValue !== '' && !field.options?.includes(initialValue) ? ' selected' : ''}>其他</option>` : ''}
         </select>
-        ${field.allowCustom ? `<input class="custom-option" id="${name}-custom" name="${name}__custom" type="text" placeholder="输入自定义内容" disabled hidden>` : ''}
+        ${field.allowCustom ? `<input class="custom-option" id="${name}-custom" name="${name}__custom" type="text" placeholder="输入自定义内容" value="${initialValue !== '' && !field.options.includes(initialValue) ? escapeHtml(initialValue) : ''}" disabled hidden>` : ''}
       </div>`
-    : `<textarea id="${name}" name="${name}"${placeholder} rows="1" spellcheck="true"></textarea>`;
+    : `<textarea id="${name}" name="${name}"${placeholder}${required} rows="1" spellcheck="true">${escapeHtml(initialValue)}</textarea>`;
 
   return `<div class="field">
         <div class="field-heading">

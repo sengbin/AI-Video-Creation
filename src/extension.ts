@@ -12,7 +12,10 @@
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
 import { formWorkflows } from './formWorkflows';
+import { PromptRecordsViewProvider } from './promptRecordsView';
 import { WorkflowFormTool } from './workflowFormTool';
+
+export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
 
 /**
  * 激活扩展、初始化用户级数据库并注册创作参数表单工具。
@@ -20,11 +23,16 @@ import { WorkflowFormTool } from './workflowFormTool';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
+  const recordsView = new PromptRecordsViewProvider(database, formWorkflows);
   context.subscriptions.push(database);
+  context.subscriptions.push(recordsView);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(PROMPT_RECORDS_VIEW_ID, recordsView)
+  );
 
   context.subscriptions.push(
     ...formWorkflows.map((workflow) =>
-      vscode.lm.registerTool(workflow.toolName, new WorkflowFormTool(workflow))
+      vscode.lm.registerTool(workflow.toolName, new WorkflowFormTool(workflow, database))
     )
   );
 }

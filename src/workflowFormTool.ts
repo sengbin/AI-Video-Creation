@@ -1,11 +1,15 @@
 import * as vscode from 'vscode';
+import { PromptDatabase } from './database';
 import { collectFormValues } from './formPanel';
 import { FormWorkflow } from './formWorkflows';
 
 type EmptyToolInput = Record<string, never>;
 
 export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput> {
-  constructor(private readonly workflow: FormWorkflow) {}
+  constructor(
+    private readonly workflow: FormWorkflow,
+    private readonly database: PromptDatabase
+  ) {}
 
   prepareInvocation(): vscode.PreparedToolInvocation {
     return {
@@ -22,6 +26,16 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
     const values = await collectFormValues(this.workflow, token);
+    if (values) {
+      this.database.saveRecord({
+        title: values.title,
+        categoryId: this.workflow.toolName,
+        categoryName: this.workflow.title,
+        schema: this.workflow.fields,
+        data: values
+      });
+    }
+
     const result = values
       ? {
           status: 'submitted',

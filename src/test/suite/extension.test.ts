@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase } from '../../database';
 import { formWorkflows } from '../../formWorkflows';
@@ -15,10 +16,14 @@ suite('AI 视频创作工具扩展', () => {
 
     try {
       const record = database.saveRecord({
+        title: '示例记录',
         categoryId: 'ai-video-creation-tools_collect_story_parameters',
         categoryName: '创意写故事',
-        schema: [{ id: 'genre', label: '题材', type: 'text' }],
-        data: { genre: '科幻' }
+        schema: [
+          { name: 'title', label: '标题', required: true },
+          { name: 'genre', label: '题材' }
+        ],
+        data: { title: '示例记录', genre: '科幻' }
       });
 
       assert.ok(fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
@@ -35,8 +40,49 @@ suite('AI 视频创作工具扩展', () => {
       database.dispose();
       database = await PromptDatabase.open(vscode.Uri.file(storagePath));
       assert.deepStrictEqual(database.getRecord(record.id), record);
+      const updatedRecord = database.updateRecord(record.id, {
+        title: '修改后的记录',
+        schema: record.schema,
+        data: { title: '修改后的记录', genre: '奇幻' }
+      });
+      assert.ok(updatedRecord);
+      assert.strictEqual(updatedRecord.title, '修改后的记录');
+      assert.strictEqual(updatedRecord.createdAt, record.createdAt);
+      assert.deepStrictEqual(updatedRecord.data, { title: '修改后的记录', genre: '奇幻' });
       assert.strictEqual(database.deleteRecord(record.id), true);
       assert.strictEqual(database.getRecord(record.id), undefined);
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('能够迁移旧数据库并保留已有记录', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-db-migration-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    fs.mkdirSync(storagePath);
+    const legacyConnection = new DatabaseSync(path.join(storagePath, 'prompt-records.sqlite'));
+    legacyConnection.exec(`
+      CREATE TABLE prompt_records (
+        id TEXT PRIMARY KEY NOT NULL,
+        category_id TEXT NOT NULL,
+        category_name TEXT NOT NULL,
+        schema_json TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO prompt_records VALUES (
+        'legacy-id', 'legacy-category', '旧分类', '[]', '{}', '2026-01-01T00:00:00.000Z'
+      );
+    `);
+    legacyConnection.close();
+
+    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+    try {
+      const [record] = database.listRecords('legacy-category');
+      assert.strictEqual(record.id, 'legacy-id');
+      assert.strictEqual(record.title, undefined);
+      assert.strictEqual(record.updatedAt, record.createdAt);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -70,6 +116,27 @@ suite('AI 视频创作工具扩展', () => {
     ]);
 
     const contributions = extension.packageJSON.contributes;
+    const activityBarContainer = contributions.viewsContainers.activitybar.find(
+      (container: { id: string }) => container.id === 'aiVideoCreation'
+    );
+    assert.ok(activityBarContainer);
+    assert.strictEqual(activityBarContainer.icon, './resources/ai-video-creation.svg');
+    assert.ok(fs.existsSync(path.join(extension.extensionUri.fsPath, activityBarContainer.icon)));
+    const activityBarIcon = fs.readFileSync(
+      path.join(extension.extensionUri.fsPath, activityBarContainer.icon),
+      'utf8'
+    );
+    assert.ok(activityBarIcon.includes('<path'));
+    assert.ok(activityBarIcon.includes('M18 14H55Q63 14 63 22'));
+    assert.strictEqual((activityBarIcon.match(/<circle /g) ?? []).length, 2);
+    assert.ok(!activityBarIcon.includes('<image'));
+    assert.deepStrictEqual(
+      contributions.views.aiVideoCreation.map((view: { id: string; type: string }) => ({
+        id: view.id,
+        type: view.type
+      })),
+      [{ id: 'aiVideoCreation.promptRecords', type: 'webview' }]
+    );
     assert.strictEqual(contributions.chatAgents.length, 1);
     assert.strictEqual(contributions.chatSkills.length, 1);
     assert.strictEqual(contributions.chatPromptFiles.length, 9);
@@ -101,31 +168,31 @@ suite('AI 视频创作工具扩展', () => {
 
     const expectedFieldNames: Readonly<Record<string, readonly string[]>> = {
       'ai-video-creation-tools_collect_story_parameters': [
-        'idea', 'genre', 'duration', 'style', 'additionalInfo'
+        'title', 'idea', 'genre', 'duration', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_image_story_parameters': [
-        'genre', 'duration', 'visualElements', 'additionalInfo'
+        'title', 'genre', 'duration', 'visualElements', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_novel_parameters': [
-        'target', 'scope', 'preserve', 'adjustments', 'additionalInfo'
+        'title', 'target', 'scope', 'preserve', 'adjustments', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_screenplay_parameters': [
-        'sourceMaterial', 'format', 'genre', 'duration', 'additionalInfo'
+        'title', 'sourceMaterial', 'format', 'genre', 'duration', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
-        'scriptSource', 'duration', 'aspectRatio', 'visualStyle', 'cameraStyle', 'additionalInfo'
+        'title', 'scriptSource', 'duration', 'aspectRatio', 'visualStyle', 'cameraStyle', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_character_parameters': [
-        'characterType', 'appearance', 'clothing', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
+        'title', 'characterType', 'appearance', 'clothing', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_scene_parameters': [
-        'placeType', 'layout', 'environment', 'composition', 'style', 'aspectRatio', 'additionalInfo'
+        'title', 'placeType', 'layout', 'environment', 'composition', 'style', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_prop_parameters': [
-        'propName', 'appearance', 'state', 'composition', 'style', 'additionalInfo'
+        'title', 'propName', 'appearance', 'state', 'composition', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_effect_parameters': [
-        'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'additionalInfo'
+        'title', 'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'additionalInfo'
       ]
     };
 
@@ -133,6 +200,7 @@ suite('AI 视频创作工具扩展', () => {
       const workflow = formWorkflows.find((item) => item.toolName === toolName);
       assert.ok(workflow);
       assert.deepStrictEqual(workflow.fields.map((field) => field.name), fieldNames);
+      assert.strictEqual(workflow.fields[0].required, true);
       assert.ok(workflow.fields.some((field) => field.name === 'additionalInfo'));
     }
 
