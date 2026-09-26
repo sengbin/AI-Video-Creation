@@ -250,7 +250,7 @@ suite('AI 视频创作工具扩展', () => {
     const agentFrontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(agentContent);
     assert.ok(agentFrontmatter);
     const agentMetadata = parseYaml(agentFrontmatter[1]);
-    assert.strictEqual(agentMetadata.name, 'AI 视频创作（扩展）');
+    assert.strictEqual(agentMetadata.name, 'AI 视频创作');
     assert.ok(agentMetadata.description);
     assert.ok(agentContent.includes('如果当前会话未加载该 Skill 或无法使用其规则，立即停止；不得调用参数表单工具或继续生成'));
 
@@ -284,7 +284,7 @@ suite('AI 视频创作工具扩展', () => {
       const metadata = parseYaml(frontmatter[1]);
       assert.ok(metadata.name);
       assert.ok(metadata.description);
-      assert.strictEqual(metadata.agent, 'AI 视频创作（扩展）');
+      assert.strictEqual(metadata.agent, 'AI 视频创作');
       assert.strictEqual(metadata.tools, undefined);
       assert.ok(promptContent.includes(`必须调用一次 \`${toolName}\``));
       assert.ok(promptContent.includes('## 使用范围'));

@@ -1,8 +1,8 @@
 ---
 description: 根据道具外观设定生成道具参考图提示词
 argument-hint: 填写道具名称、外观和画面风格
-name: 'AI 视频创作（扩展）- 道具生成'
-agent: 'AI 视频创作（扩展）'
+name: 'AI 视频创作-道具生成'
+agent: 'AI 视频创作'
 ---
 
 # 道具生成

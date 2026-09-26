@@ -1,8 +1,8 @@
 ---
 description: 根据效果视觉设定生成特效参考图提示词
 argument-hint: 填写特效来源、视觉表现和变化过程
-name: 'AI 视频创作（扩展）- 特效生成'
-agent: 'AI 视频创作（扩展）'
+name: 'AI 视频创作-特效生成'
+agent: 'AI 视频创作'
 ---
 
 # 特效生成

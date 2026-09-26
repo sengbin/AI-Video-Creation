@@ -1,8 +1,8 @@
 ---
 description: 根据角色视觉资料生成角色参考图提示词
 argument-hint: 填写角色类型、外观造型和画面风格
-name: 'AI 视频创作（扩展）- 角色生成'
-agent: 'AI 视频创作（扩展）'
+name: 'AI 视频创作-角色生成'
+agent: 'AI 视频创作'
 ---
 
 # 角色生成
