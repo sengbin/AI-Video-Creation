@@ -8,6 +8,7 @@ import {
   formWorkflows,
   RECORD_TITLE_FIELD
 } from './formWorkflows';
+import { WorkflowSubmissionStore } from './workflowFormTool';
 
 interface ViewMessage {
   readonly command: string;
@@ -25,10 +26,18 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private panelSubscriptions: vscode.Disposable[] = [];
   private readonly databaseSubscription: vscode.Disposable;
 
+  /**
+   * 创建提示词记录视图。
+   * @param database 用户级记录数据库。
+   * @param workflows 可用的提示词工作流。
+   * @param extensionUri 扩展安装目录 URI。
+   * @param submissions 供参数工具读取的一次性提交数据存储。
+   */
   constructor(
     private readonly database: PromptDatabase,
     private readonly workflows: readonly FormWorkflow[],
-    private readonly extensionUri: vscode.Uri
+    private readonly extensionUri: vscode.Uri,
+    private readonly submissions: WorkflowSubmissionStore
   ) {
     this.databaseSubscription = database.onDidChangeRecords(() => this.postState());
   }
@@ -126,14 +135,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     if (message.command === 'send-prompt') {
-      await this.sendPrompt(message.categoryId);
+      this.openPromptRecords(message.categoryId);
     }
-  }
-
-  private async sendPrompt(categoryId: string | undefined): Promise<void> {
-    const workflow = this.findWorkflow(categoryId);
-    const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
-    await vscode.commands.executeCommand('workbench.action.chat.run.prompt.current', promptUri);
   }
 
   private async handlePanelMessage(value: unknown): Promise<void> {
@@ -146,14 +149,25 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       this.postState();
       return;
     }
-    if (message.command === 'edit-record') {
+    if (message.command === 'add-new-record') {
+      await this.addRecord(this.selectedCategoryId, true);
+      return;
+    }
+    if (message.command === 'select-record') {
       await this.editRecord(message.recordId);
     }
   }
 
-  private async addRecord(categoryId: string | undefined): Promise<void> {
+  private async addRecord(categoryId: string | undefined, runPromptAfterSubmit = false): Promise<void> {
     const workflow = this.findWorkflow(categoryId);
-    const values = await collectViewForm(workflow);
+    const formWorkflow: FormWorkflow = {
+      ...workflow,
+      title: `添加${workflow.title}信息`,
+      notice: runPromptAfterSubmit
+        ? '填写或确认信息后提交，将使用这些参数运行提示词。'
+        : workflow.notice
+    };
+    const values = await collectViewForm(formWorkflow);
     if (!values) {
       return;
     }
@@ -167,6 +181,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     });
     this.selectedCategoryId = workflow.toolName;
     this.postState();
+    if (runPromptAfterSubmit) {
+      await this.runSubmittedPrompt(workflow, values);
+    }
   }
 
   private async editRecord(recordId: string | undefined): Promise<void> {
@@ -191,8 +208,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     };
     const editWorkflow: FormWorkflow = {
       ...workflow,
-      title: `修改${workflow.title}记录`,
-      notice: '正在修改已保存的记录；字段结构来自该记录保存时的模板。',
+      title: `选择${workflow.title}信息`,
+      notice: '可直接提交当前内容，也可以修改后提交；提交后将使用这些参数运行提示词。',
       fields
     };
     const values = await collectViewForm(editWorkflow, initialValues);
@@ -211,6 +228,27 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     this.selectedCategoryId = record.categoryId;
     this.postState();
+    await this.runSubmittedPrompt(workflow, values);
+  }
+
+  /** 打开指定提示词的记录列表，等待用户选择一条记录。 */
+  private openPromptRecords(categoryId: string | undefined): void {
+    const workflow = this.findWorkflow(categoryId);
+    this.selectedCategoryId = workflow.toolName;
+    this.open();
+    this.postState();
+  }
+
+  /** 将已提交参数交给对应的 Prompt 工具并启动提示词。 */
+  private async runSubmittedPrompt(workflow: FormWorkflow, values: FormValues): Promise<void> {
+    this.submissions.set(workflow.toolName, values);
+    const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
+    try {
+      await vscode.commands.executeCommand('workbench.action.chat.run.prompt.current', promptUri);
+    } catch (error) {
+      this.submissions.clear(workflow.toolName);
+      throw error;
+    }
   }
 
   private findWorkflow(categoryId: string | undefined): FormWorkflow {
@@ -248,6 +286,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     void this.panel.webview.postMessage({
       command: 'state',
+      categoryId: this.selectedCategoryId,
       categoryTitle: selectedCategory?.title ?? '提示词数据',
       records
     });
@@ -385,7 +424,8 @@ function createPageHtml(): string {
     .edit-button { min-height: 30px; border: 0; border-radius: 3px; }
     .edit-button:hover { background: var(--vscode-toolbar-hoverBackground); }
     section { min-width: 0; }
-    .heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+    .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
     h1 { min-width: 0; margin: 0; font-size: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .count { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .table { min-width: 0; }
@@ -396,6 +436,7 @@ function createPageHtml(): string {
     .record-title { font-weight: 500; }
     .record-time { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .edit-button { min-width: 44px; padding: 5px 8px; color: var(--vscode-textLink-foreground); background: transparent; }
+    .add-new-button { min-height: 32px; padding: 5px 10px; }
     .empty { padding: 24px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
     @media (max-width: 720px) {
@@ -408,7 +449,13 @@ function createPageHtml(): string {
 <body>
   <main>
     <section aria-live="polite">
-      <div class="heading"><h1 id="category-title">提示词数据</h1><span id="record-count" class="count"></span></div>
+      <div class="heading">
+        <h1 id="category-title">提示词数据</h1>
+        <div class="heading-actions">
+          <span id="record-count" class="count"></span>
+          <button id="add-new-record" class="edit-button add-new-button" type="button">添加新信息</button>
+        </div>
+      </div>
       <div class="table">
         <div class="table-header" role="row"><span>标题</span><span>添加时间</span><span>修改时间</span><span></span></div>
         <div id="record-list" role="rowgroup"></div>
@@ -463,13 +510,17 @@ function createPageHtml(): string {
         title.className = 'record-cell record-title';
         title.textContent = record.title || '旧记录（无标题）';
         title.title = title.textContent;
-        const edit = makeButton('修改', 'edit-button', '修改' + title.textContent, () => {
-          vscode.postMessage({ command: 'edit-record', recordId: record.id });
+        const select = makeButton('选择', 'edit-button', '选择' + title.textContent + '并编辑提交', () => {
+          vscode.postMessage({ command: 'select-record', recordId: record.id });
         });
-        row.append(title, makeTime(record.createdAt), makeTime(record.updatedAt), edit);
+        row.append(title, makeTime(record.createdAt), makeTime(record.updatedAt), select);
         recordList.append(row);
       }
     }
+
+    document.getElementById('add-new-record').addEventListener('click', () => {
+      vscode.postMessage({ command: 'add-new-record' });
+    });
 
     window.addEventListener('message', (event) => {
       if (event.data.command === 'state') renderState(event.data);

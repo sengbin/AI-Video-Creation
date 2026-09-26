@@ -13,7 +13,7 @@ import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
 import { formWorkflows } from './formWorkflows';
 import { PromptRecordsViewProvider } from './promptRecordsView';
-import { WorkflowFormTool } from './workflowFormTool';
+import { WorkflowFormTool, WorkflowSubmissionStore } from './workflowFormTool';
 
 export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
 
@@ -23,7 +23,13 @@ export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
-  const recordsView = new PromptRecordsViewProvider(database, formWorkflows, context.extensionUri);
+  const submissions = new WorkflowSubmissionStore();
+  const recordsView = new PromptRecordsViewProvider(
+    database,
+    formWorkflows,
+    context.extensionUri,
+    submissions
+  );
   context.subscriptions.push(database);
   context.subscriptions.push(recordsView);
   context.subscriptions.push(
@@ -32,7 +38,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     ...formWorkflows.map((workflow) =>
-      vscode.lm.registerTool(workflow.toolName, new WorkflowFormTool(workflow, database))
+      vscode.lm.registerTool(workflow.toolName, new WorkflowFormTool(workflow, database, submissions))
     )
   );
 }

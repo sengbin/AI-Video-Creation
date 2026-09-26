@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase } from '../../database';
 import { formWorkflows } from '../../formWorkflows';
+import { WorkflowFormTool, WorkflowSubmissionStore } from '../../workflowFormTool';
 
 suite('AI 视频创作工具扩展', () => {
   test('首次打开时创建用户级数据库并保存动态模板记录', async () => {
@@ -84,6 +85,30 @@ suite('AI 视频创作工具扩展', () => {
       assert.strictEqual(record.title, undefined);
       assert.strictEqual(record.updatedAt, record.createdAt);
     } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('能够将记录页提交的参数一次性交给工作流工具', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-submission-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const workflow = formWorkflows[0];
+    const values = { title: '已选记录', idea: '灯塔收到未来的信号' };
+    const submissions = new WorkflowSubmissionStore();
+    const tool = new WorkflowFormTool(workflow, database, submissions);
+    const cancellationSource = new vscode.CancellationTokenSource();
+
+    try {
+      submissions.set(workflow.toolName, values);
+      const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
+      const response = result.content[0];
+      assert.ok(response instanceof vscode.LanguageModelTextPart);
+      assert.deepStrictEqual(JSON.parse(response.value).parameters, values);
+      assert.deepStrictEqual(database.listRecords(workflow.toolName), []);
+      assert.strictEqual(submissions.take(workflow.toolName), undefined);
+    } finally {
+      cancellationSource.dispose();
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }

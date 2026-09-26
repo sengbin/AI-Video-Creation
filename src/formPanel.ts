@@ -168,7 +168,7 @@ function createFormHtml(
       <div id="status" role="status" aria-live="polite"></div>
       <div class="actions">
         <button class="secondary" id="cancel" type="button">取消</button>
-        <button class="primary" id="submit" type="submit">确定并继续</button>
+        <button class="primary" id="submit" type="submit">提交</button>
       </div>
     </form>
   </main>
