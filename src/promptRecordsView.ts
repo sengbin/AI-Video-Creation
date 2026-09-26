@@ -27,7 +27,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
   constructor(
     private readonly database: PromptDatabase,
-    private readonly workflows: readonly FormWorkflow[]
+    private readonly workflows: readonly FormWorkflow[],
+    private readonly extensionUri: vscode.Uri
   ) {
     this.databaseSubscription = database.onDidChangeRecords(() => this.postState());
   }
@@ -121,7 +122,18 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (message.command === 'add-record') {
       this.open();
       await this.addRecord(message.categoryId);
+      return;
     }
+
+    if (message.command === 'send-prompt') {
+      await this.sendPrompt(message.categoryId);
+    }
+  }
+
+  private async sendPrompt(categoryId: string | undefined): Promise<void> {
+    const workflow = this.findWorkflow(categoryId);
+    const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
+    await vscode.commands.executeCommand('workbench.action.chat.run.prompt.current', promptUri);
   }
 
   private async handlePanelMessage(value: unknown): Promise<void> {
@@ -294,12 +306,13 @@ function createCategoryHtml(): string {
     body { margin: 0; padding: 12px 8px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
     h2 { margin: 0 0 10px 8px; font-size: 13px; font-weight: 600; }
     nav { display: grid; gap: 4px; }
-    .category-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+    .category-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; }
     button { min-width: 0; min-height: 32px; border: 0; border-radius: 3px; color: inherit; font: inherit; cursor: pointer; }
     .select { padding: 5px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
-    .select:hover, .add:hover { background: var(--vscode-toolbar-hoverBackground); }
+    .select:hover, .add:hover, .send:hover { background: var(--vscode-toolbar-hoverBackground); }
     .select[aria-pressed="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); outline: 1px solid var(--vscode-focusBorder); }
     .add { padding: 4px 6px; color: var(--vscode-textLink-foreground); background: transparent; }
+    .send { padding: 4px 6px; color: var(--vscode-textLink-foreground); background: transparent; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   </style>
 </head>
@@ -333,7 +346,10 @@ function createCategoryHtml(): string {
         const add = makeButton('+ 添加', 'add', '添加' + category.title + '记录', () => {
           vscode.postMessage({ command: 'add-record', categoryId: category.id });
         });
-        item.append(select, add);
+        const send = makeButton('运行', 'send', '运行' + category.title + '提示词', () => {
+          vscode.postMessage({ command: 'send-prompt', categoryId: category.id });
+        });
+        item.append(select, add, send);
         categoryList.append(item);
       }
     }

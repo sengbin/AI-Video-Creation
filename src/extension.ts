@@ -23,7 +23,7 @@ export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
-  const recordsView = new PromptRecordsViewProvider(database, formWorkflows);
+  const recordsView = new PromptRecordsViewProvider(database, formWorkflows, context.extensionUri);
   context.subscriptions.push(database);
   context.subscriptions.push(recordsView);
   context.subscriptions.push(

@@ -11,6 +11,7 @@ export interface FormField {
 export interface FormWorkflow {
   readonly toolName: string;
   readonly title: string;
+  readonly promptPath: string;
   readonly notice: string;
   readonly fields: readonly FormField[];
 }
@@ -92,6 +93,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_story_parameters',
     title: '创意写故事',
+    promptPath: 'copilot-customizations/prompts/creative-story.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -105,6 +107,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_image_story_parameters',
     title: '图片写故事',
+    promptPath: 'copilot-customizations/prompts/image-story.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据图片和已填写内容继续。请在 Copilot 聊天中附上图片。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -117,6 +120,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_novel_parameters',
     title: '小说重创作',
+    promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据原作和已填写内容继续。请在 Copilot 聊天中粘贴或附上原作。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -130,6 +134,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_screenplay_parameters',
     title: '剧本创作',
+    promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。故事创意或原作也可以粘贴到聊天或作为附件提供。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -143,6 +148,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_shooting_script_parameters',
     title: '拍摄脚本制作',
+    promptPath: 'copilot-customizations/prompts/shooting-script.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。故事、分场大纲或剧本也可以粘贴到聊天或作为附件提供。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -157,6 +163,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_character_parameters',
     title: '角色生成',
+    promptPath: 'copilot-customizations/prompts/character-generation.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -174,6 +181,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_scene_parameters',
     title: '场景生成',
+    promptPath: 'copilot-customizations/prompts/scene-generation.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -189,6 +197,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_prop_parameters',
     title: '道具生成',
+    promptPath: 'copilot-customizations/prompts/prop-generation.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -203,6 +212,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
   {
     toolName: 'ai-video-creation-tools_collect_effect_parameters',
     title: '特效生成',
+    promptPath: 'copilot-customizations/prompts/effect-generation.prompt.md',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
