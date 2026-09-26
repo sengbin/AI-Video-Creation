@@ -153,15 +153,15 @@ suite('AI 视频创作工具扩展', () => {
     assert.ok(skillContent.includes('拍摄脚本生成提示词结构'));
 
     const promptTools = [
-      ['创意写故事.prompt.md', 'ai-video-creation-tools_collect_story_parameters', '## 创作目标'],
-      ['图片写故事.prompt.md', 'ai-video-creation-tools_collect_image_story_parameters', '## 看图提示词设计流程'],
-      ['小说重创作.prompt.md', 'ai-video-creation-tools_collect_novel_parameters', '## 改编提示词设计流程'],
-      ['剧本创作.prompt.md', 'ai-video-creation-tools_collect_screenplay_parameters', '## 剧本提示词设计流程'],
-      ['拍摄脚本制作.prompt.md', 'ai-video-creation-tools_collect_shooting_script_parameters', '## 拍摄提示词设计流程'],
-      ['角色生成.prompt.md', 'ai-video-creation-tools_collect_character_parameters', '## 角色设定流程'],
-      ['场景生成.prompt.md', 'ai-video-creation-tools_collect_scene_parameters', '## 场景设定流程'],
-      ['道具生成.prompt.md', 'ai-video-creation-tools_collect_prop_parameters', '## 道具设定流程'],
-      ['特效生成.prompt.md', 'ai-video-creation-tools_collect_effect_parameters', '## 特效设定流程']
+      ['creative-story.prompt.md', 'ai-video-creation-tools_collect_story_parameters', '## 创作目标'],
+      ['image-story.prompt.md', 'ai-video-creation-tools_collect_image_story_parameters', '## 看图提示词设计流程'],
+      ['novel-adaptation.prompt.md', 'ai-video-creation-tools_collect_novel_parameters', '## 改编提示词设计流程'],
+      ['screenplay.prompt.md', 'ai-video-creation-tools_collect_screenplay_parameters', '## 剧本提示词设计流程'],
+      ['shooting-script.prompt.md', 'ai-video-creation-tools_collect_shooting_script_parameters', '## 拍摄提示词设计流程'],
+      ['character-generation.prompt.md', 'ai-video-creation-tools_collect_character_parameters', '## 角色设定流程'],
+      ['scene-generation.prompt.md', 'ai-video-creation-tools_collect_scene_parameters', '## 场景设定流程'],
+      ['prop-generation.prompt.md', 'ai-video-creation-tools_collect_prop_parameters', '## 道具设定流程'],
+      ['effect-generation.prompt.md', 'ai-video-creation-tools_collect_effect_parameters', '## 特效设定流程']
     ];
 
     for (const [promptName, toolName, domainInstructionsHeading] of promptTools) {
@@ -179,7 +179,7 @@ suite('AI 视频创作工具扩展', () => {
       assert.ok(!promptContent.includes('ai-video-prompt-design'));
       assert.ok(promptContent.includes('代码块'));
       assert.ok(promptContent.includes('补充要求'));
-      if (promptName === '角色生成.prompt.md') {
+      if (promptName === 'character-generation.prompt.md') {
         assert.ok(promptContent.includes('角色类型和主体'));
         assert.ok(promptContent.includes('丧尸的腐坏特征'));
       }

@@ -37,7 +37,7 @@
   "contributes": {
     "chatAgents": [
       {
-        "path": "./copilot-customizations/agents/AI 视频创作.agent.md"
+        "path": "./copilot-customizations/agents/ai-video-creation.agent.md"
       }
     ],
     "chatSkills": [
@@ -47,31 +47,31 @@
     ],
     "chatPromptFiles": [
       {
-        "path": "./copilot-customizations/prompts/创意写故事.prompt.md"
+        "path": "./copilot-customizations/prompts/creative-story.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/图片写故事.prompt.md"
+        "path": "./copilot-customizations/prompts/image-story.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/小说重创作.prompt.md"
+        "path": "./copilot-customizations/prompts/novel-adaptation.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/剧本创作.prompt.md"
+        "path": "./copilot-customizations/prompts/screenplay.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/拍摄脚本制作.prompt.md"
+        "path": "./copilot-customizations/prompts/shooting-script.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/角色生成.prompt.md"
+        "path": "./copilot-customizations/prompts/character-generation.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/场景生成.prompt.md"
+        "path": "./copilot-customizations/prompts/scene-generation.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/道具生成.prompt.md"
+        "path": "./copilot-customizations/prompts/prop-generation.prompt.md"
       },
       {
-        "path": "./copilot-customizations/prompts/特效生成.prompt.md"
+        "path": "./copilot-customizations/prompts/effect-generation.prompt.md"
       }
     ],
     "languageModelTools": [
