@@ -2,7 +2,7 @@
 description: 根据创意生成短片或短剧故事
 argument-hint: 填写创意、题材、篇幅和补充要求
 name: 'AI 视频创作（扩展）- 创意写故事'
-agent: 'AI 视频创作（扩展）智能体'
+agent: 'AI 视频创作（扩展）'
 ---
 
 # 创意写故事
