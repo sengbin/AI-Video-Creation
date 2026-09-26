@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
-import { collectFormValues } from './formPanel';
+import { collectFormValues, FormSubmission } from './formPanel';
 import {
   FormField,
   FormValues,
@@ -14,6 +14,7 @@ interface ViewMessage {
   readonly command: string;
   readonly categoryId?: string;
   readonly recordId?: string;
+  readonly confirmationTitle?: string;
 }
 
 /** Provides an editor-area page for managing saved prompt records. */
@@ -134,9 +135,6 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    if (message.command === 'send-prompt') {
-      this.openPromptRecords(message.categoryId);
-    }
   }
 
   private async handlePanelMessage(value: unknown): Promise<void> {
@@ -150,39 +148,70 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
     if (message.command === 'add-new-record') {
-      await this.addRecord(this.selectedCategoryId, true);
+      await this.addRecord(this.selectedCategoryId);
       return;
     }
     if (message.command === 'select-record') {
       await this.editRecord(message.recordId);
+      return;
+    }
+    if (message.command === 'delete-record') {
+      try {
+        this.deleteRecord(message.recordId, message.confirmationTitle);
+      } catch (error) {
+        void this.panel?.webview.postMessage({
+          command: 'delete-error',
+          text: errorMessage(error)
+        });
+      }
     }
   }
 
-  private async addRecord(categoryId: string | undefined, runPromptAfterSubmit = false): Promise<void> {
+  /** 核对用户输入的标题后删除记录。 */
+  private deleteRecord(recordId: string | undefined, confirmationTitle: string | undefined): void {
+    if (typeof recordId !== 'string' || typeof confirmationTitle !== 'string') {
+      throw new Error('删除记录所需信息缺失。');
+    }
+
+    const record = this.database.getRecord(recordId);
+    if (!record) {
+      throw new Error('记录不存在或已被删除。');
+    }
+
+    const expectedTitle = record.title || '旧记录（无标题）';
+    if (confirmationTitle !== expectedTitle) {
+      throw new Error('输入的标题与记录标题不一致，未删除。');
+    }
+    if (!this.database.deleteRecord(record.id)) {
+      throw new Error('删除记录失败。');
+    }
+
+    void this.panel?.webview.postMessage({ command: 'delete-success' });
+  }
+
+  private async addRecord(categoryId: string | undefined): Promise<void> {
     const workflow = this.findWorkflow(categoryId);
     const formWorkflow: FormWorkflow = {
       ...workflow,
       title: `添加${workflow.title}信息`,
-      notice: runPromptAfterSubmit
-        ? '填写或确认信息后提交，将使用这些参数运行提示词。'
-        : workflow.notice
+      notice: '填写信息后可保存，或保存并运行对应提示词。'
     };
-    const values = await collectViewForm(formWorkflow);
-    if (!values) {
+    const submission = await collectViewForm(formWorkflow);
+    if (!submission) {
       return;
     }
 
     this.database.saveRecord({
-      title: values.title,
+      title: submission.values.title,
       categoryId: workflow.toolName,
       categoryName: workflow.title,
       schema: workflow.fields,
-      data: values
+      data: submission.values
     });
     this.selectedCategoryId = workflow.toolName;
     this.postState();
-    if (runPromptAfterSubmit) {
-      await this.runSubmittedPrompt(workflow, values);
+    if (submission.runPrompt) {
+      await this.runSubmittedPrompt(workflow, submission.values);
     }
   }
 
@@ -209,18 +238,18 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     const editWorkflow: FormWorkflow = {
       ...workflow,
       title: `选择${workflow.title}信息`,
-      notice: '可直接提交当前内容，也可以修改后提交；提交后将使用这些参数运行提示词。',
+      notice: '可直接保存当前内容，也可以修改后保存；选择保存并运行时将使用这些参数运行提示词。',
       fields
     };
-    const values = await collectViewForm(editWorkflow, initialValues);
-    if (!values) {
+    const submission = await collectViewForm(editWorkflow, initialValues);
+    if (!submission) {
       return;
     }
 
     const updatedRecord = this.database.updateRecord(record.id, {
-      title: values.title,
+      title: submission.values.title,
       schema: fields,
-      data: values
+      data: submission.values
     });
     if (!updatedRecord) {
       throw new Error('记录已不存在，无法保存修改。');
@@ -228,15 +257,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     this.selectedCategoryId = record.categoryId;
     this.postState();
-    await this.runSubmittedPrompt(workflow, values);
-  }
-
-  /** 打开指定提示词的记录列表，等待用户选择一条记录。 */
-  private openPromptRecords(categoryId: string | undefined): void {
-    const workflow = this.findWorkflow(categoryId);
-    this.selectedCategoryId = workflow.toolName;
-    this.open();
-    this.postState();
+    if (submission.runPrompt) {
+      await this.runSubmittedPrompt(workflow, submission.values);
+    }
   }
 
   /** 将已提交参数交给对应的 Prompt 工具并启动提示词。 */
@@ -323,7 +346,7 @@ function errorMessage(error: unknown): string {
 async function collectViewForm(
   workflow: FormWorkflow,
   initialValues?: FormValues
-): Promise<FormValues | undefined> {
+): Promise<FormSubmission | undefined> {
   const cancellationSource = new vscode.CancellationTokenSource();
   try {
     return await collectFormValues(workflow, cancellationSource.token, initialValues);
@@ -345,19 +368,18 @@ function createCategoryHtml(): string {
     body { margin: 0; padding: 12px 8px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
     h2 { margin: 0 0 10px 8px; font-size: 13px; font-weight: 600; }
     nav { display: grid; gap: 4px; }
-    .category-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; }
+    .category-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
     button { min-width: 0; min-height: 32px; border: 0; border-radius: 3px; color: inherit; font: inherit; cursor: pointer; }
     .select { padding: 5px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
-    .select:hover, .add:hover, .send:hover { background: var(--vscode-toolbar-hoverBackground); }
+    .select:hover, .add:hover { background: var(--vscode-toolbar-hoverBackground); }
     .select[aria-pressed="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); outline: 1px solid var(--vscode-focusBorder); }
     .add { padding: 4px 6px; color: var(--vscode-textLink-foreground); background: transparent; }
-    .send { padding: 4px 6px; color: var(--vscode-textLink-foreground); background: transparent; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   </style>
 </head>
 <body>
-  <h2>提示词分类</h2>
-  <nav id="category-list" aria-label="提示词分类"></nav>
+  <h2>创作类型</h2>
+  <nav id="category-list" aria-label="创作类型"></nav>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const categoryList = document.getElementById('category-list');
@@ -385,10 +407,7 @@ function createCategoryHtml(): string {
         const add = makeButton('+ 添加', 'add', '添加' + category.title + '记录', () => {
           vscode.postMessage({ command: 'add-record', categoryId: category.id });
         });
-        const send = makeButton('运行', 'send', '运行' + category.title + '提示词', () => {
-          vscode.postMessage({ command: 'send-prompt', categoryId: category.id });
-        });
-        item.append(select, add, send);
+        item.append(select, add);
         categoryList.append(item);
       }
     }
@@ -427,7 +446,6 @@ function createPageHtml(): string {
     .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
     .heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
     h1 { min-width: 0; margin: 0; font-size: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .count { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .table { min-width: 0; }
     .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) auto; align-items: center; gap: 12px; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
@@ -436,9 +454,41 @@ function createPageHtml(): string {
     .record-title { font-weight: 500; }
     .record-time { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .edit-button { min-width: 44px; padding: 5px 8px; color: var(--vscode-textLink-foreground); background: transparent; }
-    .add-new-button { min-height: 32px; padding: 5px 10px; }
+    .record-actions { display: flex; align-items: center; gap: 6px; }
+    .delete-button {
+      min-width: 44px; padding: 5px 8px; border: 0; border-radius: 3px;
+      color: var(--vscode-errorForeground); background: transparent;
+    }
+    .delete-button:hover { background: var(--vscode-toolbar-hoverBackground); }
+    .delete-button:focus-visible { outline: none; background: var(--vscode-toolbar-hoverBackground); }
+    .add-new-button {
+      min-height: 32px; padding: 5px 10px;
+      color: var(--vscode-button-foreground); background: var(--vscode-button-background);
+    }
+    .add-new-button:hover { background: var(--vscode-button-hoverBackground); }
     .empty { padding: 24px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    dialog {
+      width: min(440px, calc(100vw - 32px)); padding: 20px;
+      color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px;
+    }
+    dialog::backdrop { background: var(--vscode-widget-shadow); opacity: .55; }
+    dialog h2 { margin: 0 0 12px; font-size: 16px; }
+    dialog p { margin: 0 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
+    dialog label { display: block; margin-bottom: 6px; }
+    dialog input {
+      width: 100%; min-height: 34px; padding: 6px 8px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; font: inherit;
+    }
+    dialog input:focus { outline: 1px solid var(--vscode-focusBorder); }
+    .delete-error { margin-top: 8px; color: var(--vscode-errorForeground); }
+    .delete-error[hidden] { display: none; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .dialog-cancel { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+    .dialog-delete { color: var(--vscode-button-foreground); background: var(--vscode-errorForeground); }
+    .dialog-delete:disabled { opacity: .55; cursor: not-allowed; }
     @media (max-width: 720px) {
       main { padding: 16px 12px; }
       .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 86px auto; gap: 5px; }
@@ -452,7 +502,6 @@ function createPageHtml(): string {
       <div class="heading">
         <h1 id="category-title">提示词数据</h1>
         <div class="heading-actions">
-          <span id="record-count" class="count"></span>
           <button id="add-new-record" class="edit-button add-new-button" type="button">添加新信息</button>
         </div>
       </div>
@@ -461,15 +510,34 @@ function createPageHtml(): string {
         <div id="record-list" role="rowgroup"></div>
       </div>
     </section>
+    <dialog id="delete-dialog" aria-labelledby="delete-dialog-title">
+      <form id="delete-form">
+        <h2 id="delete-dialog-title">确认删除记录</h2>
+        <p id="delete-prompt"></p>
+        <label for="delete-title">确认标题</label>
+        <input id="delete-title" type="text" autocomplete="off" spellcheck="false">
+        <p id="delete-error" class="delete-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button id="cancel-delete" class="dialog-cancel" type="button">取消</button>
+          <button id="confirm-delete" class="dialog-delete" type="submit" disabled>删除</button>
+        </div>
+      </form>
+    </dialog>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const categoryTitle = document.getElementById('category-title');
-    const recordCount = document.getElementById('record-count');
     const recordList = document.getElementById('record-list');
+    const deleteDialog = document.getElementById('delete-dialog');
+    const deleteForm = document.getElementById('delete-form');
+    const deletePrompt = document.getElementById('delete-prompt');
+    const deleteTitle = document.getElementById('delete-title');
+    const deleteError = document.getElementById('delete-error');
+    const confirmDelete = document.getElementById('confirm-delete');
     const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
       year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
     });
+    let pendingDelete;
 
     function makeButton(text, className, label, onClick) {
       const button = document.createElement('button');
@@ -490,9 +558,28 @@ function createPageHtml(): string {
       return time;
     }
 
+    function openDeleteDialog(record) {
+      const title = record.title || '旧记录（无标题）';
+      pendingDelete = { id: record.id, title };
+      deletePrompt.textContent = '如果要删除请在下方输入标题“' + title + '”确定删除';
+      deleteTitle.value = '';
+      deleteError.hidden = true;
+      deleteError.textContent = '';
+      confirmDelete.disabled = true;
+      deleteDialog.showModal();
+      deleteTitle.focus();
+    }
+
+    function closeDeleteDialog() {
+      deleteDialog.close();
+      pendingDelete = undefined;
+      deleteTitle.value = '';
+      deleteError.hidden = true;
+      confirmDelete.disabled = true;
+    }
+
     function renderState(state) {
       categoryTitle.textContent = state.categoryTitle;
-      recordCount.textContent = state.records.length ? String(state.records.length) : '';
       recordList.replaceChildren();
       if (!state.records.length) {
         const empty = document.createElement('div');
@@ -513,10 +600,45 @@ function createPageHtml(): string {
         const select = makeButton('选择', 'edit-button', '选择' + title.textContent + '并编辑提交', () => {
           vscode.postMessage({ command: 'select-record', recordId: record.id });
         });
-        row.append(title, makeTime(record.createdAt), makeTime(record.updatedAt), select);
+        const actions = document.createElement('div');
+        actions.className = 'record-actions';
+        const remove = makeButton('删除', 'delete-button', '删除' + title.textContent, () => {
+          openDeleteDialog(record);
+        });
+        actions.append(select, remove);
+        row.append(title, makeTime(record.createdAt), makeTime(record.updatedAt), actions);
         recordList.append(row);
       }
     }
+
+    deleteTitle.addEventListener('input', () => {
+      confirmDelete.disabled = !pendingDelete || deleteTitle.value !== pendingDelete.title;
+      deleteError.hidden = true;
+    });
+
+    deleteForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!pendingDelete || deleteTitle.value !== pendingDelete.title) {
+        deleteError.textContent = '输入的标题与记录标题不一致。';
+        deleteError.hidden = false;
+        confirmDelete.disabled = true;
+        return;
+      }
+
+      confirmDelete.disabled = true;
+      vscode.postMessage({
+        command: 'delete-record',
+        recordId: pendingDelete.id,
+        confirmationTitle: deleteTitle.value
+      });
+    });
+
+    document.getElementById('cancel-delete').addEventListener('click', closeDeleteDialog);
+    deleteDialog.addEventListener('cancel', () => {
+      pendingDelete = undefined;
+      deleteTitle.value = '';
+      confirmDelete.disabled = true;
+    });
 
     document.getElementById('add-new-record').addEventListener('click', () => {
       vscode.postMessage({ command: 'add-new-record' });
@@ -524,6 +646,12 @@ function createPageHtml(): string {
 
     window.addEventListener('message', (event) => {
       if (event.data.command === 'state') renderState(event.data);
+      if (event.data.command === 'delete-success') closeDeleteDialog();
+      if (event.data.command === 'delete-error') {
+        deleteError.textContent = event.data.text;
+        deleteError.hidden = false;
+        confirmDelete.disabled = !pendingDelete || deleteTitle.value !== pendingDelete.title;
+      }
     });
     vscode.postMessage({ command: 'ready' });
   </script>

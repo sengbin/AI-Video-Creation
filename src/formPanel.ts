@@ -3,11 +3,24 @@ import { FormField, FormValues, FormWorkflow } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
 
+/** 表示表单参数及用户选择的保存行为。 */
+export interface FormSubmission {
+  readonly values: FormValues;
+  readonly runPrompt: boolean;
+}
+
+/**
+ * 打开工作流参数表单并等待用户提交。
+ * @param workflow 当前工作流及其字段定义。
+ * @param token 用于在调用取消时关闭表单。
+ * @param initialValues 可选的表单初始值。
+ * @returns 保存操作及表单参数；返回、取消或关闭表单时返回 undefined。
+ */
 export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
   initialValues: FormValues = {}
-): Promise<FormValues | undefined> {
+): Promise<FormSubmission | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
   }
@@ -28,7 +41,7 @@ export function collectFormValues(
     let settled = false;
     const subscriptions: vscode.Disposable[] = [];
 
-    const finish = (values: FormValues | undefined): void => {
+    const finish = (submission: FormSubmission | undefined): void => {
       if (settled) {
         return;
       }
@@ -36,7 +49,7 @@ export function collectFormValues(
       settled = true;
       subscriptions.forEach((subscription) => subscription.dispose());
       panel.dispose();
-      resolve(values);
+      resolve(submission);
     };
 
     subscriptions.push(panel.onDidDispose(() => finish(undefined)));
@@ -46,12 +59,12 @@ export function collectFormValues(
         return;
       }
 
-      if (message.command === 'cancel') {
+      if (message.command === 'back' || message.command === 'cancel') {
         finish(undefined);
         return;
       }
 
-      if (message.command !== 'submit') {
+      if (message.command !== 'save' && message.command !== 'submit') {
         return;
       }
 
@@ -64,7 +77,7 @@ export function collectFormValues(
         return;
       }
 
-      finish(values);
+      finish({ values, runPrompt: message.command === 'submit' });
     }));
   });
 }
@@ -92,6 +105,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 生成带有工作流字段和操作按钮的表单页面。 */
 function createFormHtml(
   webview: vscode.Webview,
   workflow: FormWorkflow,
@@ -149,9 +163,10 @@ function createFormHtml(
     button { min-height: 30px; padding: 5px 13px; border: 0; border-radius: 3px; font: inherit; cursor: pointer; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
     button:disabled { opacity: .65; cursor: wait; }
-    .secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-    .primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
-    .primary:hover { background: var(--vscode-button-hoverBackground); }
+    .secondary { color: #273746; background: #E8EDF2; }
+    .secondary:hover { background: #DDE4EA; }
+    .primary { color: #18374A; background: #D7EAF5; }
+    .primary:hover { background: #C8E0EE; }
     #status { min-height: 20px; color: var(--vscode-errorForeground); }
     @media (max-width: 680px) {
       body { padding: 18px; }
@@ -162,21 +177,41 @@ function createFormHtml(
 <body>
   <main>
     <h1>${escapeHtml(workflow.title)}</h1>
-    <p class="notice">${escapeHtml(workflow.notice)}提交后，Copilot 将使用表单内容继续执行。</p>
+    <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
       <div class="actions">
+        <button class="secondary" id="back" type="button">返回</button>
         <button class="secondary" id="cancel" type="button">取消</button>
-        <button class="primary" id="submit" type="submit">提交</button>
+        <button class="secondary" id="save" type="button">保存</button>
+        <button class="primary" id="submit" type="submit">保存并运行</button>
       </div>
     </form>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const form = document.getElementById('parameter-form');
+    const saveButton = document.getElementById('save');
     const submitButton = document.getElementById('submit');
     const status = document.getElementById('status');
+
+    function sendFormValues(runPrompt) {
+      const formData = new FormData(form);
+      const values = Object.fromEntries(
+        [...formData.entries()].filter(([name]) => !name.endsWith('__custom'))
+      );
+      document.querySelectorAll('[data-custom-input]').forEach((select) => {
+        if (select.value === '${CUSTOM_OPTION_VALUE}') {
+          const customInput = document.getElementById(select.dataset.customInput);
+          values[select.name] = customInput.value;
+        }
+      });
+      saveButton.disabled = true;
+      submitButton.disabled = true;
+      status.textContent = '';
+      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values });
+    }
 
     document.querySelectorAll('[data-custom-input]').forEach((select) => {
       const customInput = document.getElementById(select.dataset.customInput);
@@ -206,27 +241,22 @@ function createFormHtml(
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      const formData = new FormData(form);
-      const values = Object.fromEntries(
-        [...formData.entries()].filter(([name]) => !name.endsWith('__custom'))
-      );
-      document.querySelectorAll('[data-custom-input]').forEach((select) => {
-        if (select.value === '${CUSTOM_OPTION_VALUE}') {
-          const customInput = document.getElementById(select.dataset.customInput);
-          values[select.name] = customInput.value;
-        }
-      });
-      submitButton.disabled = true;
-      status.textContent = '';
-      vscode.postMessage({ command: 'submit', values });
+      sendFormValues(true);
     });
+
+    saveButton.addEventListener('click', () => sendFormValues(false));
 
     document.getElementById('cancel').addEventListener('click', () => {
       vscode.postMessage({ command: 'cancel' });
     });
 
+    document.getElementById('back').addEventListener('click', () => {
+      vscode.postMessage({ command: 'back' });
+    });
+
     window.addEventListener('message', (event) => {
       if (event.data.command === 'validation-error') {
+        saveButton.disabled = false;
         submitButton.disabled = false;
         status.textContent = event.data.text;
       }

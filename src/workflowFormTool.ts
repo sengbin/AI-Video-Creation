@@ -72,7 +72,10 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
     const submittedValues = this.submissions.take(this.workflow.toolName);
-    const values = submittedValues ?? await collectFormValues(this.workflow, token);
+    const submission = submittedValues
+      ? { values: submittedValues, runPrompt: true }
+      : await collectFormValues(this.workflow, token);
+    const values = submission?.values;
     if (values && !submittedValues) {
       this.database.saveRecord({
         title: values.title,
@@ -83,12 +86,18 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
       });
     }
 
-    const result = values
-      ? {
+    const result = submission
+      ? submission.runPrompt
+        ? {
           status: 'submitted',
           workflow: this.workflow.title,
           parameters: values
         }
+        : {
+            status: 'saved',
+            workflow: this.workflow.title,
+            instruction: '用户选择仅保存参数，不运行生成。停止本次生成。'
+          }
       : {
           status: 'cancelled',
           workflow: this.workflow.title,
