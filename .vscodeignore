@@ -1,0 +1,14 @@
+.vscode/**
+.vscode-test/**
+.gitignore
+agents/**
+prompts/**
+skills/**
+src/**
+tsconfig.json
+build.ps1
+**/*.map
+out/test/**
+node_modules/**
+scripts/**
+logo.xcf
