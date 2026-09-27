@@ -631,7 +631,7 @@ suite('AI视频创作助手扩展', () => {
     assert.deepStrictEqual(saveResultContribution.inputSchema.required, ['recordId']);
     assert.strictEqual(saveResultContribution.inputSchema.oneOf.length, 2);
     const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'promptRecordsView.ts'), 'utf8');
-    assert.ok(recordsViewSource.includes("const resultLabel = isContent ? '查看作品' : '查看提示词'"));
+    assert.ok(recordsViewSource.includes("const resultLabel = '查看'"));
     assert.ok(recordsViewSource.includes('id="generated-content" aria-label="生成内容"'));
     assert.ok(recordsViewSource.includes('id="prompt-result-fields" hidden'));
   });

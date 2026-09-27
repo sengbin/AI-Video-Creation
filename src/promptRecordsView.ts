@@ -66,9 +66,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
+    const selectedCategoryTitle = this.workflows.find(
+      (workflow) => workflow.toolName === this.selectedCategoryId
+    )?.title ?? '请选择创作任务';
     const panel = vscode.window.createWebviewPanel(
       'aiVideoCreation.promptRecordsEditor',
-      'AI视频创作助手',
+      selectedCategoryTitle,
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] }
     );
@@ -378,6 +381,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     const selectedCategory = this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId);
+    const categoryTitle = selectedCategory?.title ?? '请选择创作任务';
+    this.panel.title = categoryTitle;
     const records = (this.selectedCategoryId === undefined
       ? []
       : this.database.listRecords(this.selectedCategoryId)).map((record) => ({
@@ -390,7 +395,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     void this.panel.webview.postMessage({
       command: 'state',
       categoryId: this.selectedCategoryId,
-      categoryTitle: selectedCategory?.title ?? '请选择创作任务',
+      categoryTitle,
       records
     });
   }
@@ -595,8 +600,6 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .edit-button { min-height: 30px; border: 0; border-radius: 3px; }
     .edit-button:hover { background: var(--vscode-toolbar-hoverBackground); }
     section { min-width: 0; }
-    .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-    h1 { min-width: 0; margin: 0; font-size: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .table { min-width: 0; }
     .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) auto; align-items: center; gap: 12px; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
@@ -622,6 +625,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     dialog::backdrop { background: var(--vscode-widget-shadow); opacity: .55; }
     dialog h2 { margin: 0 0 12px; font-size: 16px; }
     dialog p { margin: 0 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
+    .delete-title-highlight { padding: 2px 5px; color: var(--vscode-foreground); background: var(--vscode-editor-background); border-radius: 3px; }
     dialog label { display: block; margin-bottom: 6px; }
     dialog input {
       width: 100%; min-height: 34px; padding: 6px 8px;
@@ -632,9 +636,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .delete-error { margin-top: 8px; color: var(--vscode-errorForeground); }
     .delete-error[hidden] { display: none; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-    .dialog-cancel { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-    .dialog-delete { color: var(--vscode-button-foreground); background: var(--vscode-errorForeground); }
-    .dialog-delete:disabled { opacity: .55; cursor: not-allowed; }
+    #confirm-delete:disabled { cursor: default; }
     .result-dialog { width: min(900px, calc(100vw - 32px)); }
     .result-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .result-error[hidden] { display: none; }
@@ -666,9 +668,6 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 <body>
   <main>
     <section aria-live="polite">
-      <div class="heading">
-        <h1 id="category-title">提示词数据</h1>
-      </div>
       <div class="table">
         <div class="table-header" role="row"><span>标题</span><span>添加时间</span><span>修改时间</span><span></span></div>
         <div id="record-list" role="rowgroup"></div>
@@ -682,8 +681,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         <input id="delete-title" type="text" autocomplete="off" spellcheck="false">
         <p id="delete-error" class="delete-error" role="alert" hidden></p>
         <div class="dialog-actions">
-          <button id="cancel-delete" class="dialog-cancel" type="button">取消</button>
-          <button id="confirm-delete" class="dialog-delete" type="submit" disabled>删除</button>
+          <button id="cancel-delete" type="button">取消</button>
+          <button id="confirm-delete" type="submit" disabled>删除</button>
         </div>
       </form>
     </dialog>
@@ -724,7 +723,6 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       const contentWorkflowIds = ${JSON.stringify(workflows
         .filter((workflow) => workflow.resultType === 'content')
         .map((workflow) => workflow.toolName))};
-    const categoryTitle = document.getElementById('category-title');
     const recordList = document.getElementById('record-list');
     const deleteDialog = document.getElementById('delete-dialog');
     const deleteForm = document.getElementById('delete-form');
@@ -776,7 +774,14 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function openDeleteDialog(record) {
       const title = record.title || '旧记录（无标题）';
       pendingDelete = { id: record.id, title };
-      deletePrompt.textContent = '如果要删除请在下方输入标题“' + title + '”确定删除';
+      const highlightedTitle = document.createElement('span');
+      highlightedTitle.className = 'delete-title-highlight';
+      highlightedTitle.textContent = title;
+      deletePrompt.replaceChildren(
+        document.createTextNode('如果要删除请在下方输入标题“'),
+        highlightedTitle,
+        document.createTextNode('”确定删除')
+      );
       deleteTitle.value = '';
       deleteError.hidden = true;
       deleteError.textContent = '';
@@ -864,7 +869,6 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     });
 
     function renderState(state) {
-      categoryTitle.textContent = state.categoryTitle;
       selectedCategoryId = state.categoryId;
       recordList.replaceChildren();
       if (!state.records.length) {
@@ -889,7 +893,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         const actions = document.createElement('div');
         actions.className = 'record-actions';
         const isContent = contentWorkflowIds.includes(selectedCategoryId);
-        const resultLabel = isContent ? '查看作品' : '查看提示词';
+        const resultLabel = '查看';
         const viewResult = makeButton(resultLabel, 'edit-button', resultLabel + title.textContent + '的 Copilot 返回内容', () => {
           openResultDialog(record);
         });
