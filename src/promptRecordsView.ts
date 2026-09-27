@@ -645,30 +645,54 @@ function createCategoryHtml(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
   <style nonce="${nonce}">
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 12px 8px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
-    main {
-      padding: 10px; background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
-      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px;
+    :root {
+      color-scheme: light dark;
+      --bg: var(--vscode-sideBar-background, #FFFFFF);
+      --card-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
+      --card-border: color-mix(in srgb, #FFFFFF 7%, var(--bg));
+      --config-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
+      --divider: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+      --card-shadow: none;
     }
-    main + main { margin-top: 10px; }
+    body.vscode-light {
+      --card-background: color-mix(in srgb, var(--bg) 62%, #E2E2E2);
+      --card-border: color-mix(in srgb, #000000 22%, #FFFFFF);
+      --config-background: color-mix(in srgb, var(--bg) 62%, #E2E2E2);
+      --divider: color-mix(in srgb, #000000 8%, transparent);
+      --card-shadow: 0 1px 2px rgba(0,0,0,0.07);
+    }
+    body.vscode-dark {
+      --card-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
+      --card-border: color-mix(in srgb, #FFFFFF 7%, var(--bg));
+      --config-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
+      --divider: color-mix(in srgb, #FFFFFF 8%, transparent);
+    }
+    * { box-sizing: border-box; }
+    body { min-width: 0; margin: 0; padding: 8px 0 10px 16px; color: var(--vscode-foreground); background: var(--bg); font-family: var(--vscode-font-family); }
+    main { display: grid; gap: 10px; padding-right: 16px; }
+    .card { width: 100%; min-width: 0; }
+    .card-inner {
+      min-width: 0; padding: 8px; background: var(--card-background);
+      border: 1px solid var(--card-border); border-radius: 6px; box-shadow: var(--card-shadow);
+    }
+    .config-card { background: var(--config-background); border: 0; box-shadow: none; }
     h2 {
-      display: flex; align-items: center; gap: 9px;
-      margin: 0 0 8px; padding: 2px; font-size: 16px; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+      margin: 0 0 8px; padding: 2px 0; color: var(--vscode-foreground); font-size: 12px; font-weight: 600;
     }
     h2::before {
-      width: 4px; height: 18px; flex: 0 0 auto;
+      width: 3px; height: 16px; flex: 0 0 auto;
       background: var(--vscode-focusBorder); border-radius: 2px; content: "";
     }
     nav { display: grid; gap: 0; }
-    .category-stage + .category-stage { margin-top: 10px; padding-top: 8px; border-top: 2px solid var(--vscode-panel-border); }
+    .category-stage + .category-stage { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--divider); }
     .stage-title {
       margin: 0 2px 4px; padding-left: 7px; border-left: 2px solid var(--vscode-focusBorder);
       color: var(--vscode-descriptionForeground); font-size: 12px; font-weight: 600;
     }
     .category-item {
       display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; padding: 4px 2px;
-      background: transparent; border: 0; border-bottom: 1px solid var(--vscode-panel-border);
+      background: transparent; border: 0; border-bottom: 1px solid var(--divider);
     }
     .category-item:last-child { border-bottom-color: transparent; }
     .category-item:hover { background: var(--vscode-list-hoverBackground); }
@@ -682,17 +706,23 @@ function createCategoryHtml(): string {
 </head>
 <body>
   <main>
-    <h2>任务</h2>
-    <nav id="category-list" aria-label="任务"></nav>
-  </main>
-  <main>
-    <h2>设置</h2>
-    <nav aria-label="设置">
-      <div class="category-item">
-        <button id="open-collections" class="select" type="button">合集管理</button>
-        <button id="create-collection" class="add" type="button">创建</button>
+    <section class="card">
+      <div class="card-inner">
+        <h2>任务</h2>
+        <nav id="category-list" aria-label="任务"></nav>
       </div>
-    </nav>
+    </section>
+    <section class="card">
+      <div class="card-inner config-card">
+        <h2>设置</h2>
+        <nav aria-label="设置">
+          <div class="category-item">
+            <button id="open-collections" class="select" type="button">合集管理</button>
+            <button id="create-collection" class="add" type="button">创建</button>
+          </div>
+        </nav>
+      </div>
+    </section>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
