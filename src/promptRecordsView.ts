@@ -548,6 +548,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         : this.viewMode === 'edit-collection' ? '编辑合集'
           : selectedCategory?.title ?? '请选择任务';
     this.panel.title = categoryTitle;
+    const collections = this.database.listWorkCollections();
+    const collectionNames = new Map(collections.map((collection) => [collection.id, collection.name]));
     const records = (this.viewMode !== 'records' || this.selectedCategoryId === undefined
       ? []
       : this.database.listRecords(
@@ -557,6 +559,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       id: record.id,
       title: record.title,
       collectionId: record.collectionId,
+      collectionName: collectionNames.get(record.collectionId),
+      episodeNumber: record.episodeNumber,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     }));
@@ -567,10 +571,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       categoryId: this.selectedCategoryId,
       categoryTitle,
       records,
-      collections: this.database.listWorkCollections(),
+      collections,
       collectionFilter: this.selectedWorkCollectionFilter,
       editingWorkCollection: this.viewMode === 'edit-collection'
-        ? this.database.listWorkCollections().find((collection) => collection.id === this.editingWorkCollectionId)
+        ? collections.find((collection) => collection.id === this.editingWorkCollectionId)
         : undefined
     });
   }
@@ -801,7 +805,18 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .edit-button:hover { background: var(--vscode-toolbar-hoverBackground); }
     section { min-width: 0; }
     .table { min-width: 0; }
-    .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) auto; align-items: center; gap: 12px; }
+    .records-table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+    #records-table { display: table; width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; }
+    #records-table .table-header { display: table-row; padding: 0; border: 0; }
+    #records-table .table-header > span { display: table-cell; padding: 10px 8px; border-bottom: 1px solid var(--vscode-panel-border); white-space: nowrap; }
+    #records-table #record-list { display: table-row-group; }
+    #records-table .record-row { display: table-row; min-height: 0; padding: 0; border: 0; }
+    #records-table .record-row > * { display: table-cell; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); vertical-align: middle; }
+    .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) 96px; align-items: center; gap: 12px; }
+    .table.has-collection-columns .table-header, .table.has-collection-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 96px; }
+    .table.has-episode-columns .table-header, .table.has-episode-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(90px, .7fr) minmax(112px, 1fr) 96px; }
+    #records-table:not(.has-collection-columns) .collection-column,
+    #records-table:not(.has-episode-columns) .episode-column { display: none; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .record-row { min-height: 44px; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     .record-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -812,9 +827,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
     .record-title-button:hover { color: var(--vscode-textLink-foreground); text-decoration: underline; }
     .record-title-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    #records-table .record-title-button { padding: 0; }
     .record-time { color: var(--vscode-descriptionForeground); font-size: 12px; }
     .edit-button { min-width: 44px; padding: 5px 8px; color: var(--vscode-textLink-foreground); background: transparent; }
-    .record-actions { display: flex; align-items: center; gap: 6px; }
+    .record-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .record-actions button { flex: 0 0 auto; white-space: nowrap; }
     .filter-toolbar { display: flex; max-width: 720px; align-items: center; gap: 8px; margin-bottom: 14px; }
     .collection-filter { position: relative; width: min(420px, 100%); min-width: 0; }
     .collection-filter-trigger {
@@ -856,7 +873,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
     .collection-filter-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
     .filter-button { min-height: 30px; padding: 4px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; }
-    .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) auto; }
+    .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) 96px; }
     .collection-description { color: var(--vscode-descriptionForeground); }
     .collection-form { display: grid; max-width: 760px; gap: 16px; }
     .collection-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
@@ -923,8 +940,10 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .result-dialog textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
     @media (max-width: 720px) {
       main { padding: 16px 12px; }
-      .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 86px auto; gap: 5px; }
-      .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px auto; gap: 5px; }
+      .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 96px; gap: 5px; }
+      .table.has-collection-columns .table-header, .table.has-collection-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 96px; gap: 5px; }
+      .table.has-episode-columns .table-header, .table.has-episode-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 64px 76px 96px; gap: 5px; }
+      .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px 96px; gap: 5px; }
       .record-time { font-size: 10px; }
     }
   </style>
@@ -942,9 +961,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           <div id="collection-filter-menu" class="collection-filter-menu" role="listbox" aria-label="合集筛选选项" hidden></div>
         </div>
       </div>
-      <div class="table">
-        <div class="table-header" role="row"><span>标题</span><span>添加时间</span><span>修改时间</span><span></span></div>
-        <div id="record-list" role="rowgroup"></div>
+      <div class="records-table-scroll">
+        <div id="records-table" class="table" role="table">
+          <div class="table-header" role="row"><span>标题</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span></span></div>
+          <div id="record-list" role="rowgroup"></div>
+        </div>
       </div>
     </section>
     <section id="collections-section" class="collection-table" aria-live="polite" hidden>
@@ -995,25 +1016,25 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <h2 id="result-dialog-title">查看结果</h2>
       <div id="content-result-field" class="result-field" hidden>
         <div class="result-field-heading">
-          <label id="generated-content-label" for="generated-content">生成内容</label>
+          <label id="generated-content-label" for="generated-content">Copilot 生成的内容：</label>
           <button id="copy-content" class="result-copy-button" type="button" disabled>复制内容</button>
         </div>
-        <textarea id="generated-content" aria-label="生成内容" rows="1" placeholder="暂无已保存的生成内容"></textarea>
+        <textarea id="generated-content" aria-label="Copilot 生成的内容：" rows="1" placeholder="暂无已保存的 Copilot 生成的内容"></textarea>
       </div>
       <div id="prompt-result-fields" hidden>
         <div class="result-field">
           <div class="result-field-heading">
-            <label id="generated-result-zh-label" for="generated-result-zh">中文提示词</label>
+            <label id="generated-result-zh-label" for="generated-result-zh">Copilot 生成的中文提示词</label>
             <button id="copy-result-zh" class="result-copy-button" type="button" disabled>复制提示词</button>
           </div>
-          <textarea id="generated-result-zh" aria-label="中文提示词" rows="1" placeholder="暂无已保存的中文提示词"></textarea>
+          <textarea id="generated-result-zh" aria-label="Copilot 生成的中文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的中文提示词"></textarea>
         </div>
         <div class="result-field">
           <div class="result-field-heading">
-            <label id="generated-result-en-label" for="generated-result-en">English Prompt</label>
+            <label id="generated-result-en-label" for="generated-result-en">Copilot 生成的英文提示词</label>
             <button id="copy-result-en" class="result-copy-button" type="button" disabled>复制提示词</button>
           </div>
-          <textarea id="generated-result-en" aria-label="English Prompt" rows="1" placeholder="No saved English prompt"></textarea>
+          <textarea id="generated-result-en" aria-label="Copilot 生成的英文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的英文提示词"></textarea>
         </div>
       </div>
       <p id="result-error" class="result-error" role="alert" hidden></p>
@@ -1025,6 +1046,12 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const episodeWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.supportsEpisodeNumber !== false)
+      .map((workflow) => workflow.toolName))};
+    const visualAssetWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.supportsEpisodeNumber === false)
+      .map((workflow) => workflow.toolName))};
       const contentWorkflowIds = ${JSON.stringify(workflows
         .filter((workflow) => workflow.resultType === 'content')
         .map((workflow) => workflow.toolName))};
@@ -1034,7 +1061,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const screenplayWorkflowIds = ${JSON.stringify(workflows
       .filter((workflow) => workflow.toolName === SCREENPLAY_WORKFLOW_NAME)
       .map((workflow) => workflow.toolName))};
+    const workflowTitles = ${JSON.stringify(Object.fromEntries(workflows.map((workflow) => [workflow.toolName, workflow.title])))};
     const recordList = document.getElementById('record-list');
+    const recordsTable = document.getElementById('records-table');
     const collectionList = document.getElementById('collection-list');
     const recordsSection = document.getElementById('records-section');
     const collectionsSection = document.getElementById('collections-section');
@@ -1094,6 +1123,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       button.setAttribute('aria-label', label);
       button.addEventListener('click', onClick);
       return button;
+    }
+
+    function getResultActionLabel(workflowId) {
+      if (screenplayWorkflowIds.includes(workflowId)) return '查看剧本';
+      if (bilingualContentWorkflowIds.includes(workflowId)) return '查看拍摄脚本';
+      if (contentWorkflowIds.includes(workflowId)) return '查看作品';
+      return '查看' + workflowTitles[workflowId] + '提示词';
     }
 
     function makeTime(value) {
@@ -1198,7 +1234,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         ? 'bilingual-content'
         : contentWorkflowIds.includes(selectedCategoryId) ? 'content' : 'prompt';
       const isContent = viewingResultType !== 'prompt';
-      resultDialogTitle.textContent = (isContent ? '查看作品：' : '查看提示词：') + title;
+      resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + title;
       contentResultField.hidden = !isContent || isBilingualContent;
       promptResultFields.hidden = isContent && !isBilingualContent;
       configureResultLabels(selectedCategoryId, true);
@@ -1224,17 +1260,20 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       const isShootingScript = bilingualContentWorkflowIds.includes(workflowId);
       const isScreenplay = screenplayWorkflowIds.includes(workflowId);
       const statusLabel = isLoading ? '正在读取已保存的' : '暂无已保存的';
-      generatedContentLabel.textContent = isScreenplay ? '剧本内容' : '生成内容';
+      const contentDescription = isScreenplay ? 'Copilot 生成的剧本内容' : 'Copilot 生成的内容';
+      generatedContentLabel.textContent = contentDescription + '：';
       generatedContent.setAttribute('aria-label', generatedContentLabel.textContent);
-      generatedContent.placeholder = statusLabel + (isScreenplay ? '剧本内容' : '生成内容');
-      generatedResultZhLabel.textContent = isShootingScript ? '拍摄脚本提示词' : '中文提示词';
-      generatedResultEnLabel.textContent = isShootingScript ? 'Shooting Script Prompt' : 'English Prompt';
+      generatedContent.placeholder = statusLabel + contentDescription;
+      generatedResultZhLabel.textContent = isShootingScript
+        ? 'Copilot 生成的中文拍摄脚本'
+        : 'Copilot 生成的中文提示词';
+      generatedResultEnLabel.textContent = isShootingScript
+        ? 'Copilot 生成的英文拍摄脚本'
+        : 'Copilot 生成的英文提示词';
       generatedResultZh.setAttribute('aria-label', generatedResultZhLabel.textContent);
       generatedResultEn.setAttribute('aria-label', generatedResultEnLabel.textContent);
-      generatedResultZh.placeholder = statusLabel + (isShootingScript ? '拍摄脚本提示词' : '中文提示词');
-      generatedResultEn.placeholder = isShootingScript
-        ? (isLoading ? 'Loading saved Shooting Script Prompt' : 'No saved Shooting Script Prompt')
-        : (isLoading ? 'Loading saved English prompt' : 'No saved English prompt');
+      generatedResultZh.placeholder = statusLabel + generatedResultZhLabel.textContent;
+      generatedResultEn.placeholder = statusLabel + generatedResultEnLabel.textContent;
       const copyLabel = '复制提示词';
       copyResultZhButton.textContent = copyLabel;
       copyResultEnButton.textContent = copyLabel;
@@ -1291,6 +1330,12 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
       editingWorkCollectionId = state.editingWorkCollection?.id;
+      const hasEpisodeColumns = episodeWorkflowIds.includes(state.categoryId);
+      recordsTable.classList.toggle('has-episode-columns', hasEpisodeColumns);
+      recordsTable.classList.toggle(
+        'has-collection-columns',
+        hasEpisodeColumns || visualAssetWorkflowIds.includes(state.categoryId)
+      );
       collections = state.collections;
       recordsSection.hidden = state.viewMode !== 'records';
       collectionsSection.hidden = state.viewMode !== 'collections';
@@ -1327,27 +1372,39 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         const row = document.createElement('div');
         row.className = 'record-row';
         row.setAttribute('role', 'row');
+        const titleCell = document.createElement('span');
+        titleCell.className = 'record-cell record-title';
         const title = document.createElement('button');
         title.type = 'button';
-        title.className = 'record-cell record-title record-title-button';
+        title.className = 'record-title-button';
         title.textContent = record.title || '旧记录（无标题）';
         title.title = title.textContent;
         title.setAttribute('aria-label', '编辑并提交' + title.textContent);
         title.addEventListener('click', () => {
           vscode.postMessage({ command: 'select-record', recordId: record.id });
         });
+        titleCell.append(title);
+        const collectionName = document.createElement('span');
+        collectionName.className = 'record-cell collection-column';
+        collectionName.textContent = record.collectionId === '0' ? '-' : record.collectionName || '-';
+        collectionName.title = collectionName.textContent;
+        const episodeNumber = document.createElement('span');
+        episodeNumber.className = 'record-cell episode-column';
+        episodeNumber.textContent = record.collectionId === '0' || !record.episodeNumber
+          ? '-'
+          : '第 ' + record.episodeNumber + ' 集';
         const actions = document.createElement('div');
         actions.className = 'record-actions';
         const isContent = contentWorkflowIds.includes(selectedCategoryId);
-        const resultLabel = '查看';
-        const viewResult = makeButton(resultLabel, 'edit-button', resultLabel + title.textContent + '的 Copilot 返回内容', () => {
+        const resultLabel = getResultActionLabel(selectedCategoryId);
+        const viewResult = makeButton(resultLabel, 'edit-button', resultLabel + '：' + title.textContent, () => {
           openResultDialog(record);
         });
         const remove = makeButton('删除', 'delete-button', '删除' + title.textContent, () => {
           openDeleteDialog(record);
         });
         actions.append(viewResult, remove);
-        row.append(title, makeTime(record.createdAt), makeTime(record.updatedAt), actions);
+        row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), actions);
         recordList.append(row);
       }
     }
@@ -1506,7 +1563,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         const isBilingualContent = viewingResultType === 'bilingual-content';
         contentResultField.hidden = !isContent;
         promptResultFields.hidden = isContent && !isBilingualContent;
-        resultDialogTitle.textContent = (isContent || isBilingualContent ? '查看作品：' : '查看提示词：') + event.data.title;
+        resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + event.data.title;
         configureResultLabels(selectedCategoryId, false);
         generatedContent.value = event.data.content ?? '';
         generatedResultZh.value = event.data.contentZh ?? '';
