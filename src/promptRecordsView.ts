@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Episode, PromptDatabase, PromptRecord } from './database';
+import { WorkCollection, PromptDatabase, PromptRecord } from './database';
 import { collectFormValues, FormSubmission } from './formPanel';
 import {
   FormField,
@@ -17,9 +17,9 @@ interface ViewMessage {
   readonly categoryId?: string;
   readonly recordId?: string;
   readonly confirmationTitle?: string;
-  readonly episodeId?: string;
-  readonly episodeName?: string;
-  readonly episodeDescription?: string;
+  readonly collectionId?: string;
+  readonly collectionName?: string;
+  readonly collectionDescription?: string;
   readonly content?: string;
   readonly contentZh?: string;
   readonly contentEn?: string;
@@ -30,9 +30,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private panel: vscode.WebviewPanel | undefined;
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
-  private selectedEpisodeFilter = 'all';
-  private viewMode: 'records' | 'episodes' | 'create-episode' | 'edit-episode' = 'records';
-  private editingEpisodeId: string | undefined;
+  private selectedWorkCollectionFilter = 'all';
+  private viewMode: 'records' | 'collections' | 'create-collection' | 'edit-collection' = 'records';
+  private editingWorkCollectionId: string | undefined;
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
   private panelSubscriptions: vscode.Disposable[] = [];
@@ -74,9 +74,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    const selectedCategoryTitle = this.viewMode === 'episodes' ? '剧集管理'
-      : this.viewMode === 'create-episode' ? '创建剧集'
-        : this.viewMode === 'edit-episode' ? '编辑剧集'
+    const selectedCategoryTitle = this.viewMode === 'collections' ? '合集管理'
+      : this.viewMode === 'create-collection' ? '创建合集'
+        : this.viewMode === 'edit-collection' ? '编辑合集'
           : this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId)?.title ?? '请选择任务';
     const panel = vscode.window.createWebviewPanel(
       'aiVideoCreation.promptRecordsEditor',
@@ -140,8 +140,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    if (message.command === 'open-episodes') {
-      this.viewMode = 'episodes';
+    if (message.command === 'open-collections') {
+      this.viewMode = 'collections';
       this.selectedCategoryId = undefined;
       this.open();
       this.postState();
@@ -153,8 +153,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    if (message.command === 'create-episode') {
-      this.viewMode = 'create-episode';
+    if (message.command === 'create-collection') {
+      this.viewMode = 'create-collection';
       this.selectedCategoryId = undefined;
       this.open();
       this.postState();
@@ -172,25 +172,25 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       this.postState();
       return;
     }
-    if (message.command === 'submit-episode') {
+    if (message.command === 'submit-collection') {
       try {
-        this.createEpisode(message.episodeName, message.episodeDescription);
+        this.createWorkCollection(message.collectionName, message.collectionDescription);
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'episode-create-error', text: errorMessage(error) });
+        void this.panel?.webview.postMessage({ command: 'collection-create-error', text: errorMessage(error) });
       }
       return;
     }
-    if (message.command === 'update-episode') {
+    if (message.command === 'update-collection') {
       try {
-        this.updateEpisode(message.episodeId, message.episodeName, message.episodeDescription);
+        this.updateWorkCollection(message.collectionId, message.collectionName, message.collectionDescription);
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'episode-create-error', text: errorMessage(error) });
+        void this.panel?.webview.postMessage({ command: 'collection-create-error', text: errorMessage(error) });
       }
       return;
     }
-    if (message.command === 'cancel-episode-create') {
-      this.viewMode = 'episodes';
-      this.editingEpisodeId = undefined;
+    if (message.command === 'cancel-collection-create') {
+      this.viewMode = 'collections';
+      this.editingWorkCollectionId = undefined;
       this.postState();
       return;
     }
@@ -198,23 +198,23 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       await this.editRecord(message.recordId);
       return;
     }
-    if (message.command === 'episode-filter') {
-      if (typeof message.episodeId !== 'string' ||
-          (message.episodeId !== 'all' && message.episodeId !== '0' &&
-           !this.database.listEpisodes().some((episode) => episode.id === message.episodeId))) {
-        throw new Error('剧集筛选条件无效。');
+    if (message.command === 'collection-filter') {
+      if (typeof message.collectionId !== 'string' ||
+          (message.collectionId !== 'all' && message.collectionId !== '0' &&
+           !this.database.listWorkCollections().some((collection) => collection.id === message.collectionId))) {
+        throw new Error('合集筛选条件无效。');
       }
-      this.selectedEpisodeFilter = message.episodeId;
+      this.selectedWorkCollectionFilter = message.collectionId;
       this.postState();
       return;
     }
-    if (message.command === 'edit-episode') {
-      await this.editEpisode(message.episodeId);
+    if (message.command === 'edit-collection') {
+      await this.editWorkCollection(message.collectionId);
       return;
     }
-    if (message.command === 'delete-episode') {
+    if (message.command === 'delete-collection') {
       try {
-        this.deleteEpisode(message.episodeId, message.confirmationTitle);
+        this.deleteWorkCollection(message.collectionId, message.confirmationTitle);
       } catch (error) {
         void this.panel?.webview.postMessage({ command: 'delete-error', text: errorMessage(error) });
       }
@@ -348,7 +348,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       title: `添加${workflow.title}信息`,
       notice: '填写信息后可保存，或保存并运行对应提示词。'
     };
-    const submission = await collectViewForm(formWorkflow, undefined, this.database.listEpisodes());
+    const submission = await collectViewForm(formWorkflow, undefined, this.database.listWorkCollections());
     if (!submission) {
       return;
     }
@@ -357,7 +357,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       title: submission.values.title,
       categoryId: workflow.toolName,
       categoryName: workflow.title,
-      episodeId: submission.episodeId,
+      collectionId: submission.collectionId,
       schema: workflow.fields,
       data: submission.values
     });
@@ -387,7 +387,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     const initialValues = {
       ...recordValues,
       title: record.title ?? recordValues.title ?? '',
-      episodeId: record.episodeId
+      collectionId: record.collectionId
     };
     const editWorkflow: FormWorkflow = {
       ...workflow,
@@ -395,14 +395,14 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       notice: '可直接保存当前内容，也可以修改后保存；选择保存并运行时将使用这些参数运行提示词。',
       fields
     };
-    const submission = await collectViewForm(editWorkflow, initialValues, this.database.listEpisodes());
+    const submission = await collectViewForm(editWorkflow, initialValues, this.database.listWorkCollections());
     if (!submission) {
       return;
     }
 
     const updatedRecord = this.database.updateRecord(record.id, {
       title: submission.values.title,
-      episodeId: submission.episodeId,
+      collectionId: submission.collectionId,
       schema: fields,
       data: submission.values
     });
@@ -424,7 +424,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     recordId: string
   ): Promise<void> {
     const record = this.database.getRecord(recordId);
-    this.submissions.set(workflow.toolName, values, recordId, record?.episodeId ?? '0');
+    this.submissions.set(workflow.toolName, values, recordId, record?.collectionId ?? '0');
     const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
     try {
       await vscode.commands.executeCommand('workbench.action.chat.run.prompt.current', promptUri);
@@ -434,66 +434,66 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
   }
 
-  /** 校验编辑器页面提交的数据并创建剧集。 */
-  private createEpisode(name: string | undefined, description: string | undefined): void {
+  /** 校验编辑器页面提交的数据并创建合集。 */
+  private createWorkCollection(name: string | undefined, description: string | undefined): void {
     if (typeof name !== 'string' || typeof description !== 'string' || !name.trim()) {
-      throw new Error('剧集名称不能为空，剧集描述必须是文本。');
+      throw new Error('合集名称不能为空，合集简介必须是文本。');
     }
-    this.database.createEpisode({ name, description });
-    this.viewMode = 'episodes';
+    this.database.createWorkCollection({ name, description });
+    this.viewMode = 'collections';
     this.selectedCategoryId = undefined;
     this.postState();
   }
 
-  /** 打开指定剧集的编辑页面并传入当前数据。 */
-  private editEpisode(episodeId: string | undefined): void {
-    if (typeof episodeId !== 'string') {
-      throw new Error('剧集标识缺失。');
+  /** 打开指定合集的编辑页面并传入当前数据。 */
+  private editWorkCollection(collectionId: string | undefined): void {
+    if (typeof collectionId !== 'string') {
+      throw new Error('合集标识缺失。');
     }
-    const episode = this.database.listEpisodes().find((item) => item.id === episodeId);
-    if (!episode) {
-      throw new Error('剧集不存在或已被删除。');
+    const collection = this.database.listWorkCollections().find((item) => item.id === collectionId);
+    if (!collection) {
+      throw new Error('合集不存在或已被删除。');
     }
-    this.editingEpisodeId = episode.id;
-    this.viewMode = 'edit-episode';
+    this.editingWorkCollectionId = collection.id;
+    this.viewMode = 'edit-collection';
     this.postState();
   }
 
-  /** 校验编辑页面提交的数据并更新剧集。 */
-  private updateEpisode(
-    episodeId: string | undefined,
+  /** 校验编辑页面提交的数据并更新合集。 */
+  private updateWorkCollection(
+    collectionId: string | undefined,
     name: string | undefined,
     description: string | undefined
   ): void {
-    if (typeof episodeId !== 'string' || typeof name !== 'string' ||
+    if (typeof collectionId !== 'string' || typeof name !== 'string' ||
         typeof description !== 'string' || !name.trim()) {
-      throw new Error('剧集标识无效，剧集名称不能为空，描述必须是文本。');
+      throw new Error('合集标识无效，合集名称不能为空，描述必须是文本。');
     }
-    if (!this.database.updateEpisode(episodeId, { name, description })) {
-      throw new Error('剧集已不存在，无法保存修改。');
+    if (!this.database.updateWorkCollection(collectionId, { name, description })) {
+      throw new Error('合集已不存在，无法保存修改。');
     }
-    this.editingEpisodeId = undefined;
-    this.viewMode = 'episodes';
+    this.editingWorkCollectionId = undefined;
+    this.viewMode = 'collections';
     this.postState();
   }
 
-  /** 校验确认名称后删除剧集及其关联记录。 */
-  private deleteEpisode(episodeId: string | undefined, confirmationTitle: string | undefined): void {
-    if (typeof episodeId !== 'string' || typeof confirmationTitle !== 'string') {
-      throw new Error('删除剧集所需信息缺失。');
+  /** 校验确认名称后删除合集及其关联记录。 */
+  private deleteWorkCollection(collectionId: string | undefined, confirmationTitle: string | undefined): void {
+    if (typeof collectionId !== 'string' || typeof confirmationTitle !== 'string') {
+      throw new Error('删除合集所需信息缺失。');
     }
-    const episode = this.database.listEpisodes().find((item) => item.id === episodeId);
-    if (!episode) {
-      throw new Error('剧集不存在或已被删除。');
+    const collection = this.database.listWorkCollections().find((item) => item.id === collectionId);
+    if (!collection) {
+      throw new Error('合集不存在或已被删除。');
     }
-    if (confirmationTitle !== episode.name) {
-      throw new Error('输入的名称与剧集名称不一致，未删除。');
+    if (confirmationTitle !== collection.name) {
+      throw new Error('输入的名称与合集名称不一致，未删除。');
     }
-    if (this.selectedEpisodeFilter === episode.id) {
-      this.selectedEpisodeFilter = 'all';
+    if (this.selectedWorkCollectionFilter === collection.id) {
+      this.selectedWorkCollectionFilter = 'all';
     }
-    if (!this.database.deleteEpisode(episode.id)) {
-      throw new Error('删除剧集失败。');
+    if (!this.database.deleteWorkCollection(collection.id)) {
+      throw new Error('删除合集失败。');
     }
     void this.panel?.webview.postMessage({ command: 'delete-success' });
   }
@@ -524,20 +524,20 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     const selectedCategory = this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId);
-    const categoryTitle = this.viewMode === 'episodes' ? '剧集管理'
-      : this.viewMode === 'create-episode' ? '创建剧集'
-        : this.viewMode === 'edit-episode' ? '编辑剧集'
+    const categoryTitle = this.viewMode === 'collections' ? '合集管理'
+      : this.viewMode === 'create-collection' ? '创建合集'
+        : this.viewMode === 'edit-collection' ? '编辑合集'
           : selectedCategory?.title ?? '请选择任务';
     this.panel.title = categoryTitle;
     const records = (this.viewMode !== 'records' || this.selectedCategoryId === undefined
       ? []
       : this.database.listRecords(
         this.selectedCategoryId,
-        this.selectedEpisodeFilter === 'all' ? undefined : this.selectedEpisodeFilter
+        this.selectedWorkCollectionFilter === 'all' ? undefined : this.selectedWorkCollectionFilter
       )).map((record) => ({
       id: record.id,
       title: record.title,
-      episodeId: record.episodeId,
+      collectionId: record.collectionId,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     }));
@@ -548,10 +548,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       categoryId: this.selectedCategoryId,
       categoryTitle,
       records,
-      episodes: this.database.listEpisodes(),
-      episodeFilter: this.selectedEpisodeFilter,
-      editingEpisode: this.viewMode === 'edit-episode'
-        ? this.database.listEpisodes().find((episode) => episode.id === this.editingEpisodeId)
+      collections: this.database.listWorkCollections(),
+      collectionFilter: this.selectedWorkCollectionFilter,
+      editingWorkCollection: this.viewMode === 'edit-collection'
+        ? this.database.listWorkCollections().find((collection) => collection.id === this.editingWorkCollectionId)
         : undefined
     });
   }
@@ -587,11 +587,11 @@ function errorMessage(error: unknown): string {
 async function collectViewForm(
   workflow: FormWorkflow,
   initialValues?: FormValues,
-  episodes: readonly Episode[] = []
+  collections: readonly WorkCollection[] = []
 ): Promise<FormSubmission | undefined> {
   const cancellationSource = new vscode.CancellationTokenSource();
   try {
-    return await collectFormValues(workflow, cancellationSource.token, initialValues, episodes);
+    return await collectFormValues(workflow, cancellationSource.token, initialValues, collections);
   } finally {
     cancellationSource.dispose();
   }
@@ -650,19 +650,19 @@ function createCategoryHtml(): string {
     <h2>设置</h2>
     <nav aria-label="设置">
       <div class="category-item">
-        <button id="open-episodes" class="select" type="button">剧集管理</button>
-        <button id="create-episode" class="add" type="button">创建</button>
+        <button id="open-collections" class="select" type="button">合集管理</button>
+        <button id="create-collection" class="add" type="button">创建</button>
       </div>
     </nav>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const categoryList = document.getElementById('category-list');
-    document.getElementById('open-episodes').addEventListener('click', () => {
-      vscode.postMessage({ command: 'open-episodes' });
+    document.getElementById('open-collections').addEventListener('click', () => {
+      vscode.postMessage({ command: 'open-collections' });
     });
-    document.getElementById('create-episode').addEventListener('click', () => {
-      vscode.postMessage({ command: 'create-episode' });
+    document.getElementById('create-collection').addEventListener('click', () => {
+      vscode.postMessage({ command: 'create-collection' });
     });
     const categoryStages = [
       {
@@ -781,27 +781,61 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .edit-button { min-width: 44px; padding: 5px 8px; color: var(--vscode-textLink-foreground); background: transparent; }
     .record-actions { display: flex; align-items: center; gap: 6px; }
     .filter-toolbar { display: flex; max-width: 720px; align-items: center; gap: 8px; margin-bottom: 14px; }
-    .filter-toolbar select {
-      width: min(420px, 100%); min-width: 0; min-height: 32px; padding: 4px 8px;
-      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; font: inherit;
+    .collection-filter { position: relative; width: min(420px, 100%); min-width: 0; }
+    .collection-filter-trigger {
+      display: flex; width: 100%; min-height: 32px; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 4px 10px; color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 3px; text-align: left;
     }
+    .collection-filter-trigger.is-scope-filter { color: var(--vscode-textLink-foreground); }
+    .collection-filter-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    .collection-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .collection-filter-chevron {
+      width: 8px; height: 8px; flex: 0 0 auto; margin: -4px 2px 0 0;
+      border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg);
+    }
+    .collection-filter-menu {
+      position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: 0;
+      max-height: 240px; overflow-y: auto; padding: 3px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+      border-radius: 3px; box-shadow: 0 3px 8px var(--vscode-widget-shadow);
+    }
+    .collection-filter-menu[hidden] { display: none; }
+    .collection-filter-option {
+      display: block; width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
+      color: var(--vscode-input-foreground); background: transparent; border: 0;
+      text-align: left; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .collection-filter-option.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .collection-filter-option:hover,
+    .collection-filter-option:focus-visible {
+      background: var(--vscode-list-hoverBackground);
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 90%, #FFFFFF);
+      outline: none;
+    }
+    .collection-filter-option[aria-selected="true"] {
+      color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-input-foreground));
+      background: var(--vscode-list-inactiveSelectionBackground);
+    }
+    .collection-filter-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
     .filter-button { min-height: 30px; padding: 4px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; }
-    .episode-table .table-header, .episode-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) auto; }
-    .episode-description { color: var(--vscode-descriptionForeground); }
-    .episode-form { display: grid; max-width: 760px; gap: 16px; }
-    .episode-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
-    .episode-form label { display: block; margin-bottom: 6px; font-weight: 600; }
-    .episode-form input, .episode-form textarea {
+    .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) auto; }
+    .collection-description { color: var(--vscode-descriptionForeground); }
+    .collection-form { display: grid; max-width: 760px; gap: 16px; }
+    .collection-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
+    .collection-form label { display: block; margin-bottom: 6px; font-weight: 600; }
+    .collection-form input, .collection-form textarea {
       width: 100%; padding: 8px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit;
     }
-    .episode-form input { min-height: 36px; }
-    .episode-form textarea { min-height: 120px; resize: vertical; }
-    .episode-form input:focus, .episode-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
-    .episode-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
-    .episode-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .collection-form input { min-height: 36px; }
+    .collection-form textarea { min-height: 120px; resize: vertical; }
+    .collection-form input:focus, .collection-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
+    .collection-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
+    .collection-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .delete-button {
       min-width: 44px; padding: 5px 8px; border: 0; border-radius: 3px;
       color: var(--vscode-errorForeground); background: transparent;
@@ -855,7 +889,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     @media (max-width: 720px) {
       main { padding: 16px 12px; }
       .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 86px auto; gap: 5px; }
-      .episode-table .table-header, .episode-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px auto; gap: 5px; }
+      .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px auto; gap: 5px; }
       .record-time { font-size: 10px; }
     }
   </style>
@@ -864,45 +898,49 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
   <main>
     <section id="records-section" aria-live="polite">
       <div class="filter-toolbar">
-        <select id="episode-filter" aria-label="按剧集筛选">
-          <option value="all">所有内容</option>
-          <option value="0">不归属剧集</option>
-        </select>
+        <div class="collection-filter" id="collection-filter">
+          <button id="collection-filter-trigger" class="collection-filter-trigger is-scope-filter" type="button"
+            role="combobox" aria-label="按合集筛选" aria-haspopup="listbox" aria-expanded="false" aria-controls="collection-filter-menu">
+            <span id="collection-filter-label" class="collection-filter-label">所有内容</span>
+            <span class="collection-filter-chevron" aria-hidden="true"></span>
+          </button>
+          <div id="collection-filter-menu" class="collection-filter-menu" role="listbox" aria-label="合集筛选选项" hidden></div>
+        </div>
       </div>
       <div class="table">
         <div class="table-header" role="row"><span>标题</span><span>添加时间</span><span>修改时间</span><span></span></div>
         <div id="record-list" role="rowgroup"></div>
       </div>
     </section>
-    <section id="episodes-section" class="episode-table" aria-live="polite" hidden>
-      <div class="table-header" role="row"><span>剧集名称</span><span>剧集描述</span><span>创建时间</span><span></span></div>
-      <div id="episode-list" role="rowgroup"></div>
+    <section id="collections-section" class="collection-table" aria-live="polite" hidden>
+      <div class="table-header" role="row"><span>合集名称</span><span>合集简介</span><span>创建时间</span><span></span></div>
+      <div id="collection-list" role="rowgroup"></div>
     </section>
-    <section id="create-episode-section" hidden>
-      <form id="episode-form" class="episode-form">
-        <h2 id="episode-form-title">创建剧集</h2>
+    <section id="create-collection-section" hidden>
+      <form id="collection-form" class="collection-form">
+        <h2 id="collection-form-title">创建合集</h2>
         <div>
-          <label for="episode-name">剧集名称</label>
-          <input id="episode-name" name="name" type="text" maxlength="120" required autocomplete="off">
+          <label for="collection-name">合集名称</label>
+          <input id="collection-name" name="name" type="text" maxlength="120" required autocomplete="off">
         </div>
         <div>
-          <label for="episode-description">剧集描述</label>
-          <textarea id="episode-description" name="description" rows="5"></textarea>
+          <label for="collection-description">合集简介</label>
+          <textarea id="collection-description" name="description" rows="5"></textarea>
         </div>
-        <p id="episode-form-error" class="episode-form-error" role="alert"></p>
-        <div class="episode-form-actions">
-          <button id="cancel-episode-create" class="edit-button" type="button">取消</button>
-          <button id="save-episode" class="filter-button" type="submit">创建</button>
+        <p id="collection-form-error" class="collection-form-error" role="alert"></p>
+        <div class="collection-form-actions">
+          <button id="cancel-collection-create" class="edit-button" type="button">取消</button>
+          <button id="save-collection" class="filter-button" type="submit">创建</button>
         </div>
       </form>
     </section>
-    <dialog id="episode-warning-dialog" aria-labelledby="episode-warning-title">
-      <h2 id="episode-warning-title">删除剧集</h2>
-      <p class="delete-warning">此操作不可撤销。删除剧集会同时删除该剧集下的所有任务数据及已生成内容。</p>
-      <p id="episode-warning-name"></p>
+    <dialog id="collection-warning-dialog" aria-labelledby="collection-warning-title">
+      <h2 id="collection-warning-title">删除合集</h2>
+      <p class="delete-warning">此操作不可撤销。删除合集会同时删除该合集下的所有任务数据及已生成内容。</p>
+      <p id="collection-warning-name"></p>
       <div class="dialog-actions">
-        <button id="cancel-episode-warning" type="button">取消</button>
-        <button id="continue-episode-delete" class="delete-button" type="button">继续删除</button>
+        <button id="cancel-collection-warning" type="button">取消</button>
+        <button id="continue-collection-delete" class="delete-button" type="button">继续删除</button>
       </div>
     </dialog>
     <dialog id="delete-dialog" aria-labelledby="delete-dialog-title">
@@ -962,18 +1000,21 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       .filter((workflow) => workflow.toolName === SCREENPLAY_WORKFLOW_NAME)
       .map((workflow) => workflow.toolName))};
     const recordList = document.getElementById('record-list');
-    const episodeList = document.getElementById('episode-list');
+    const collectionList = document.getElementById('collection-list');
     const recordsSection = document.getElementById('records-section');
-    const episodesSection = document.getElementById('episodes-section');
-    const createEpisodeSection = document.getElementById('create-episode-section');
-    const episodeForm = document.getElementById('episode-form');
-    const episodeNameInput = document.getElementById('episode-name');
-    const episodeDescriptionInput = document.getElementById('episode-description');
-    const episodeFormError = document.getElementById('episode-form-error');
-    const episodeFilter = document.getElementById('episode-filter');
+    const collectionsSection = document.getElementById('collections-section');
+    const createWorkCollectionSection = document.getElementById('create-collection-section');
+    const collectionForm = document.getElementById('collection-form');
+    const collectionNameInput = document.getElementById('collection-name');
+    const collectionDescriptionInput = document.getElementById('collection-description');
+    const collectionFormError = document.getElementById('collection-form-error');
+    const collectionFilter = document.getElementById('collection-filter');
+    const collectionFilterTrigger = document.getElementById('collection-filter-trigger');
+    const collectionFilterLabel = document.getElementById('collection-filter-label');
+    const collectionFilterMenu = document.getElementById('collection-filter-menu');
     const deleteDialog = document.getElementById('delete-dialog');
-    const episodeWarningDialog = document.getElementById('episode-warning-dialog');
-    const episodeWarningName = document.getElementById('episode-warning-name');
+    const collectionWarningDialog = document.getElementById('collection-warning-dialog');
+    const collectionWarningName = document.getElementById('collection-warning-name');
     const deleteForm = document.getElementById('delete-form');
     const deletePrompt = document.getElementById('delete-prompt');
     const deleteTitle = document.getElementById('delete-title');
@@ -1000,9 +1041,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     let pendingDelete;
     let viewingResultRecordId;
     let selectedCategoryId;
+    let selectedCollectionFilter = 'all';
+    let collectionFilterItems = [];
     let currentViewMode = 'records';
-    let editingEpisodeId;
-    let episodes = [];
+    let editingWorkCollectionId;
+    let collections = [];
     let viewingResultType;
     let isResultLoaded = false;
     const copyFeedbackTimers = new WeakMap();
@@ -1026,16 +1069,64 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       return time;
     }
 
+    function renderCollectionFilter(items, selectedValue) {
+      collectionFilterItems = items;
+      selectedCollectionFilter = selectedValue;
+      const selectedItem = items.find((item) => item.value === selectedValue);
+      collectionFilterLabel.textContent = selectedItem?.label ?? '所有内容';
+      collectionFilterTrigger.classList.toggle(
+        'is-scope-filter',
+        selectedItem?.isScopeOption === true
+      );
+      collectionFilterMenu.replaceChildren();
+      for (const item of items) {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'collection-filter-option';
+        if (item.isScopeOption) option.classList.add('is-scope-option');
+        option.setAttribute('role', 'option');
+        const isSelected = item.value === selectedValue;
+        option.setAttribute('aria-selected', String(isSelected));
+        option.textContent = item.label;
+        option.addEventListener('click', () => {
+          selectedCollectionFilter = item.value;
+          collectionFilterLabel.textContent = item.label;
+          collectionFilterTrigger.classList.toggle('is-scope-filter', item.isScopeOption === true);
+          collectionFilterMenu.querySelectorAll('[role="option"]').forEach((element) => {
+            const isSelected = element === option;
+            element.setAttribute('aria-selected', String(isSelected));
+          });
+          closeCollectionFilterMenu();
+          vscode.postMessage({ command: 'collection-filter', collectionId: item.value });
+        });
+        collectionFilterMenu.append(option);
+      }
+    }
+
+    function openCollectionFilterMenu(focusIndex) {
+      collectionFilterMenu.hidden = false;
+      collectionFilterTrigger.setAttribute('aria-expanded', 'true');
+      const options = collectionFilterMenu.querySelectorAll('[role="option"]');
+      const selectedIndex = collectionFilterItems.findIndex((item) => item.value === selectedCollectionFilter);
+      options[Math.max(0, Math.min(focusIndex ?? selectedIndex, options.length - 1))]?.focus();
+    }
+
+    function closeCollectionFilterMenu(returnFocus = false) {
+      collectionFilterMenu.hidden = true;
+      collectionFilterTrigger.setAttribute('aria-expanded', 'false');
+      if (returnFocus) collectionFilterTrigger.focus();
+    }
+
     function openDeleteDialog(record) {
       const title = record.title || '旧记录（无标题）';
       pendingDelete = { kind: 'record', id: record.id, title };
       showDeleteNameDialog('记录', title);
     }
 
-    function openEpisodeDeleteWarning(episode) {
-      pendingDelete = { kind: 'episode', id: episode.id, title: episode.name };
-      episodeWarningName.textContent = '即将删除剧集“' + episode.name + '”及其全部绑定数据。';
-      episodeWarningDialog.showModal();
+    function openWorkCollectionDeleteWarning(collection) {
+      pendingDelete = { kind: 'collection', id: collection.id, title: collection.name };
+      collectionWarningName.textContent = '即将删除合集“' + collection.name + '”及其全部绑定数据。';
+      collectionWarningDialog.showModal();
     }
 
     function showDeleteNameDialog(kind, title) {
@@ -1164,35 +1255,28 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function renderState(state) {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
-      editingEpisodeId = state.editingEpisode?.id;
-      episodes = state.episodes;
+      editingWorkCollectionId = state.editingWorkCollection?.id;
+      collections = state.collections;
       recordsSection.hidden = state.viewMode !== 'records';
-      episodesSection.hidden = state.viewMode !== 'episodes';
-      createEpisodeSection.hidden = state.viewMode !== 'create-episode' && state.viewMode !== 'edit-episode';
-      episodeFilter.replaceChildren();
-      [
-        { value: 'all', label: '所有内容' },
-        { value: '0', label: '不归属剧集' },
-        ...episodes.map((episode) => ({ value: episode.id, label: episode.name }))
-      ].forEach((item) => {
-        const option = document.createElement('option');
-        option.value = item.value;
-        option.textContent = item.label;
-        episodeFilter.append(option);
-      });
-      episodeFilter.value = state.episodeFilter;
-      if (state.viewMode === 'episodes') {
-        renderEpisodes(episodes);
+      collectionsSection.hidden = state.viewMode !== 'collections';
+      createWorkCollectionSection.hidden = state.viewMode !== 'create-collection' && state.viewMode !== 'edit-collection';
+      renderCollectionFilter([
+        { value: 'all', label: '所有内容', isScopeOption: true },
+        { value: '0', label: '未归属合集', isScopeOption: true },
+        ...collections.map((collection) => ({ value: collection.id, label: collection.name }))
+      ], state.collectionFilter);
+      if (state.viewMode === 'collections') {
+        renderWorkCollections(collections);
         return;
       }
-      if (state.viewMode === 'create-episode' || state.viewMode === 'edit-episode') {
-        const editingEpisode = state.editingEpisode;
-        document.getElementById('episode-form-title').textContent = editingEpisode ? '编辑剧集' : '创建剧集';
-        document.getElementById('save-episode').textContent = editingEpisode ? '保存' : '创建';
-        episodeNameInput.value = editingEpisode?.name ?? '';
-        episodeDescriptionInput.value = editingEpisode?.description ?? '';
-        episodeFormError.textContent = '';
-        episodeNameInput.focus();
+      if (state.viewMode === 'create-collection' || state.viewMode === 'edit-collection') {
+        const editingWorkCollection = state.editingWorkCollection;
+        document.getElementById('collection-form-title').textContent = editingWorkCollection ? '编辑合集' : '创建合集';
+        document.getElementById('save-collection').textContent = editingWorkCollection ? '保存' : '创建';
+        collectionNameInput.value = editingWorkCollection?.name ?? '';
+        collectionDescriptionInput.value = editingWorkCollection?.description ?? '';
+        collectionFormError.textContent = '';
+        collectionNameInput.focus();
         return;
       }
       recordList.replaceChildren();
@@ -1233,57 +1317,85 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       }
     }
 
-    function renderEpisodes(items) {
-      episodeList.replaceChildren();
+    function renderWorkCollections(items) {
+      collectionList.replaceChildren();
       if (items.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = '暂无剧集';
-        episodeList.append(empty);
+        empty.textContent = '暂无合集';
+        collectionList.append(empty);
         return;
       }
-      for (const episode of items) {
+      for (const collection of items) {
         const row = document.createElement('div');
-        row.className = 'record-row episode-row';
+        row.className = 'record-row collection-row';
         row.setAttribute('role', 'row');
         const name = document.createElement('span');
         name.className = 'record-cell record-title';
-        name.textContent = episode.name;
-        name.title = episode.name;
+        name.textContent = collection.name;
+        name.title = collection.name;
         const description = document.createElement('span');
-        description.className = 'record-cell episode-description';
-        description.textContent = episode.description;
-        description.title = episode.description;
+        description.className = 'record-cell collection-description';
+        description.textContent = collection.description;
+        description.title = collection.description;
         const actions = document.createElement('div');
         actions.className = 'record-actions';
-        const edit = makeButton('编辑', 'edit-button', '编辑剧集' + episode.name, () => {
-          vscode.postMessage({ command: 'edit-episode', episodeId: episode.id });
+        const edit = makeButton('编辑', 'edit-button', '编辑合集' + collection.name, () => {
+          vscode.postMessage({ command: 'edit-collection', collectionId: collection.id });
         });
-        const remove = makeButton('删除', 'delete-button', '删除剧集' + episode.name, () => {
-          openEpisodeDeleteWarning(episode);
+        const remove = makeButton('删除', 'delete-button', '删除合集' + collection.name, () => {
+          openWorkCollectionDeleteWarning(collection);
         });
         actions.append(edit, remove);
-        row.append(name, description, makeTime(episode.createdAt), actions);
-        episodeList.append(row);
+        row.append(name, description, makeTime(collection.createdAt), actions);
+        collectionList.append(row);
       }
     }
 
-    episodeFilter.addEventListener('change', () => {
-      vscode.postMessage({ command: 'episode-filter', episodeId: episodeFilter.value });
+    collectionFilterTrigger.addEventListener('click', () => {
+      if (collectionFilterMenu.hidden) {
+        openCollectionFilterMenu();
+      } else {
+        closeCollectionFilterMenu();
+      }
+    });
+    collectionFilterTrigger.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        openCollectionFilterMenu();
+      }
+    });
+    collectionFilterMenu.addEventListener('keydown', (event) => {
+      const options = [...collectionFilterMenu.querySelectorAll('[role="option"]')];
+      const currentIndex = options.indexOf(document.activeElement);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCollectionFilterMenu(true);
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const offset = event.key === 'ArrowDown' ? 1 : -1;
+        options[Math.max(0, Math.min(currentIndex + offset, options.length - 1))]?.focus();
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        options[event.key === 'Home' ? 0 : options.length - 1]?.focus();
+      }
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!collectionFilter.contains(event.target)) closeCollectionFilterMenu();
     });
 
-    episodeForm.addEventListener('submit', (event) => {
+    collectionForm.addEventListener('submit', (event) => {
       event.preventDefault();
-      episodeFormError.textContent = '';
+      collectionFormError.textContent = '';
       vscode.postMessage({
-        command: currentViewMode === 'edit-episode' ? 'update-episode' : 'submit-episode',
-        ...(currentViewMode === 'edit-episode' ? { episodeId: editingEpisodeId } : {}),
-        episodeName: episodeNameInput.value,
-        episodeDescription: episodeDescriptionInput.value
+        command: currentViewMode === 'edit-collection' ? 'update-collection' : 'submit-collection',
+        ...(currentViewMode === 'edit-collection' ? { collectionId: editingWorkCollectionId } : {}),
+        collectionName: collectionNameInput.value,
+        collectionDescription: collectionDescriptionInput.value
       });
     });
-    document.getElementById('cancel-episode-create').addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancel-episode-create' });
+    document.getElementById('cancel-collection-create').addEventListener('click', () => {
+      vscode.postMessage({ command: 'cancel-collection-create' });
     });
 
     deleteTitle.addEventListener('input', () => {
@@ -1302,21 +1414,21 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 
       confirmDelete.disabled = true;
       vscode.postMessage({
-        command: pendingDelete.kind === 'episode' ? 'delete-episode' : 'delete-record',
-        ...(pendingDelete.kind === 'episode' ? { episodeId: pendingDelete.id } : { recordId: pendingDelete.id }),
+        command: pendingDelete.kind === 'collection' ? 'delete-collection' : 'delete-record',
+        ...(pendingDelete.kind === 'collection' ? { collectionId: pendingDelete.id } : { recordId: pendingDelete.id }),
         confirmationTitle: deleteTitle.value
       });
     });
 
     document.getElementById('cancel-delete').addEventListener('click', closeDeleteDialog);
-    document.getElementById('cancel-episode-warning').addEventListener('click', () => {
-      episodeWarningDialog.close();
+    document.getElementById('cancel-collection-warning').addEventListener('click', () => {
+      collectionWarningDialog.close();
       pendingDelete = undefined;
     });
-    document.getElementById('continue-episode-delete').addEventListener('click', () => {
-      if (!pendingDelete || pendingDelete.kind !== 'episode') return;
-      episodeWarningDialog.close();
-      showDeleteNameDialog('剧集', pendingDelete.title);
+    document.getElementById('continue-collection-delete').addEventListener('click', () => {
+      if (!pendingDelete || pendingDelete.kind !== 'collection') return;
+      collectionWarningDialog.close();
+      showDeleteNameDialog('合集', pendingDelete.title);
     });
     document.getElementById('close-result').addEventListener('click', closeResultDialog);
     copyContentButton.addEventListener('click', () => copyResult(generatedContent, copyContentButton, '复制内容'));
@@ -1345,13 +1457,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       deleteTitle.value = '';
       confirmDelete.disabled = true;
     });
-    episodeWarningDialog.addEventListener('cancel', () => {
+    collectionWarningDialog.addEventListener('cancel', () => {
       pendingDelete = undefined;
     });
 
     window.addEventListener('message', (event) => {
       if (event.data.command === 'state') renderState(event.data);
-      if (event.data.command === 'episode-create-error') episodeFormError.textContent = event.data.text;
+      if (event.data.command === 'collection-create-error') collectionFormError.textContent = event.data.text;
       if (event.data.command === 'delete-success') closeDeleteDialog();
       if (event.data.command === 'generated-result' && event.data.recordId === viewingResultRecordId) {
         viewingResultType = event.data.resultType;

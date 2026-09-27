@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Episode } from './database';
+import { WorkCollection } from './database';
 import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
@@ -20,8 +20,8 @@ export interface FormImageAttachment {
 export interface FormSubmission {
   readonly values: FormValues;
   readonly runPrompt: boolean;
-  /** 表单所选剧集；'0' 表示不归属剧集。 */
-  readonly episodeId: string;
+  /** 表单所选合集；'0' 表示未归属合集。 */
+  readonly collectionId: string;
 }
 
 /**
@@ -90,7 +90,7 @@ export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
   initialValues: FormValues = {},
-  episodes: readonly Episode[] = []
+  collections: readonly WorkCollection[] = []
 ): Promise<FormSubmission | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
@@ -106,7 +106,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(workflow, initialValues, episodes);
+  panel.webview.html = createFormHtml(workflow, initialValues, collections);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -140,9 +140,9 @@ export function collectFormValues(
       }
 
       const values = readFormValues(message.values, workflow);
-        const episodeId = message.episodeId;
-        if (!values || typeof episodeId !== 'string' ||
-          (episodeId !== '0' && !episodes.some((episode) => episode.id === episodeId))) {
+        const collectionId = message.collectionId;
+        if (!values || typeof collectionId !== 'string' ||
+          (collectionId !== '0' && !collections.some((collection) => collection.id === collectionId))) {
         void panel.webview.postMessage({
           command: 'validation-error',
           text: '表单数据无效，请检查后重新提交。'
@@ -159,7 +159,7 @@ export function collectFormValues(
         return;
       }
 
-      finish({ values, runPrompt: message.command === 'submit', episodeId });
+      finish({ values, runPrompt: message.command === 'submit', collectionId });
     }));
   });
 }
@@ -204,7 +204,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function createFormHtml(
   workflow: FormWorkflow,
   initialValues: FormValues,
-  episodes: readonly Episode[]
+  collections: readonly WorkCollection[]
 ): string {
   const nonce = createNonce();
   const imageAttachments = workflow.supportsImageAttachments
@@ -221,7 +221,7 @@ function createFormHtml(
   const fields = workflow.fields.map((field) =>
     renderField(field, initialValues[field.name] ?? '')
   ).join('');
-  const episodeField = renderEpisodeField(episodes, initialValues.episodeId ?? '0');
+  const collectionField = renderWorkCollectionField(collections, initialValues.collectionId ?? '0');
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -271,6 +271,7 @@ function createFormHtml(
     .field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
     .field-heading { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
     label { font-size: 13px; font-weight: 600; }
+    .field-label { font-size: 13px; font-weight: 600; }
     .field-description { color: var(--vscode-foreground); opacity: .82; font-size: 12px; }
     textarea, select {
       width: 100%; resize: none; padding: 9px 10px;
@@ -280,6 +281,45 @@ function createFormHtml(
     }
     textarea { max-height: calc(17.4em + 20px); overflow-y: auto; }
     select { min-height: 38px; resize: none; }
+    .collection-picker { position: relative; width: 100%; }
+    .collection-picker-trigger {
+      display: flex; width: 100%; min-height: 38px; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 9px 10px; color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 3px; font: inherit; line-height: 1.45; text-align: left;
+    }
+    .collection-picker-trigger.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .collection-picker-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    .collection-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .collection-picker-chevron {
+      width: 8px; height: 8px; flex: 0 0 auto; margin: -4px 2px 0 0;
+      border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg);
+    }
+    .collection-picker-menu {
+      position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: 0;
+      max-height: min(240px, 50vh); overflow-y: auto; padding: 3px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+      border-radius: 3px; box-shadow: 0 3px 8px var(--vscode-widget-shadow);
+    }
+    .collection-picker-menu[hidden] { display: none; }
+    .collection-picker-option {
+      display: block; width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
+      color: var(--vscode-input-foreground); background: transparent; border: 0;
+      font: inherit; line-height: 1.45; text-align: left; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .collection-picker-option.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .collection-picker-option:hover,
+    .collection-picker-option:focus-visible {
+      background: var(--vscode-list-hoverBackground);
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 90%, #FFFFFF);
+      outline: none;
+    }
+    .collection-picker-option[aria-selected="true"] {
+      color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-input-foreground));
+      background: var(--vscode-list-inactiveSelectionBackground);
+    }
+    .collection-picker-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
     .select-with-custom { display: flex; width: 100%; min-width: 0; gap: 8px; }
     .select-with-custom select { flex: 1 1 100%; min-width: 0; }
     .select-with-custom.has-custom select { flex: 0 1 auto; max-width: 55%; }
@@ -312,7 +352,7 @@ function createFormHtml(
     <h1>${escapeHtml(workflow.title)}</h1>
     <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
-      ${episodeField}
+      ${collectionField}
       ${imageAttachmentField}
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
@@ -330,6 +370,72 @@ function createFormHtml(
     const submitButton = document.getElementById('submit');
     const status = document.getElementById('status');
     const imageAttachmentArea = document.getElementById('image-attachment-area');
+    const collectionSelect = document.getElementById('collectionId');
+    const collectionPicker = document.getElementById('collection-picker');
+    const collectionPickerTrigger = document.getElementById('collection-picker-trigger');
+    const collectionPickerLabel = document.getElementById('collection-picker-label');
+    const collectionPickerMenu = document.getElementById('collection-picker-menu');
+    const collectionPickerOptions = Array.from(collectionPickerMenu.querySelectorAll('[role="option"]'));
+
+    function closeCollectionPicker(returnFocus = false) {
+      collectionPickerMenu.hidden = true;
+      collectionPickerTrigger.setAttribute('aria-expanded', 'false');
+      if (returnFocus) collectionPickerTrigger.focus();
+    }
+
+    function openCollectionPicker(focusIndex) {
+      collectionPickerMenu.hidden = false;
+      collectionPickerTrigger.setAttribute('aria-expanded', 'true');
+      const selectedIndex = collectionPickerOptions.findIndex((option) => option.getAttribute('aria-selected') === 'true');
+      collectionPickerOptions[Math.max(0, Math.min(focusIndex ?? selectedIndex, collectionPickerOptions.length - 1))]?.focus();
+    }
+
+    collectionPickerTrigger.addEventListener('click', () => {
+      if (collectionPickerMenu.hidden) openCollectionPicker();
+      else closeCollectionPicker();
+    });
+    collectionPickerTrigger.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openCollectionPicker();
+      }
+    });
+    collectionPickerOptions.forEach((option, index) => {
+      option.addEventListener('click', () => {
+        collectionSelect.value = option.dataset.value;
+        collectionPickerLabel.textContent = option.textContent;
+        collectionPickerTrigger.classList.toggle('is-scope-option', option.classList.contains('is-scope-option'));
+        collectionPickerOptions.forEach((candidate) => {
+          candidate.setAttribute('aria-selected', String(candidate === option));
+        });
+        collectionSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        closeCollectionPicker(true);
+      });
+      option.addEventListener('keydown', (event) => {
+        let nextIndex;
+        if (event.key === 'ArrowDown') nextIndex = Math.min(index + 1, collectionPickerOptions.length - 1);
+        else if (event.key === 'ArrowUp') nextIndex = Math.max(index - 1, 0);
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = collectionPickerOptions.length - 1;
+        else if (event.key === 'Escape') {
+          event.preventDefault();
+          closeCollectionPicker(true);
+          return;
+        } else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          option.click();
+          return;
+        } else return;
+        event.preventDefault();
+        collectionPickerOptions[nextIndex].focus();
+      });
+    });
+    collectionPicker.addEventListener('focusout', (event) => {
+      if (!collectionPicker.contains(event.relatedTarget)) closeCollectionPicker();
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!collectionPicker.contains(event.target)) closeCollectionPicker();
+    });
 
     let imageAttachments = imageAttachmentArea
       ? JSON.parse(imageAttachmentArea.dataset.initialImages)
@@ -483,9 +589,9 @@ function createFormHtml(
     function sendFormValues(runPrompt) {
       const formData = new FormData(form);
       const values = Object.fromEntries(
-        [...formData.entries()].filter(([name]) => name !== 'episodeId' && !name.endsWith('__custom'))
+        [...formData.entries()].filter(([name]) => name !== 'collectionId' && !name.endsWith('__custom'))
       );
-      const episodeId = formData.get('episodeId');
+      const collectionId = formData.get('collectionId');
       document.querySelectorAll('[data-custom-input]').forEach((select) => {
         if (select.value === '${CUSTOM_OPTION_VALUE}') {
           const customInput = document.getElementById(select.dataset.customInput);
@@ -498,7 +604,7 @@ function createFormHtml(
       saveButton.disabled = true;
       submitButton.disabled = true;
       status.textContent = '';
-      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values, episodeId });
+      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values, collectionId });
     }
 
     document.querySelectorAll('[data-custom-input]').forEach((select) => {
@@ -550,17 +656,32 @@ function createFormHtml(
 </html>`;
 }
 
-/** 生成固定在任务参数表单顶部的剧集归属选择项。 */
-function renderEpisodeField(episodes: readonly Episode[], selectedEpisodeId: string): string {
-  const options = episodes.map((episode) =>
-    `<option value="${escapeHtml(episode.id)}"${episode.id === selectedEpisodeId ? ' selected' : ''}>${escapeHtml(episode.name)}</option>`
+/** 生成固定在任务参数表单顶部的合集归属选择项。 */
+function renderWorkCollectionField(collections: readonly WorkCollection[], selectedWorkCollectionId: string): string {
+  const options = [
+    { id: '0', name: '未归属合集', isScopeOption: true },
+    ...collections.map((collection) => ({ id: collection.id, name: collection.name, isScopeOption: false }))
+  ];
+  const nativeOptions = options.map((option) =>
+    `<option value="${escapeHtml(option.id)}"${option.id === selectedWorkCollectionId ? ' selected' : ''}>${escapeHtml(option.name)}</option>`
   ).join('');
+  const pickerOptions = options.map((option) => {
+    const isSelected = option.id === selectedWorkCollectionId;
+    const classes = ['collection-picker-option'];
+    if (option.isScopeOption) classes.push('is-scope-option');
+    return `<button class="${classes.join(' ')}" type="button" role="option" data-value="${escapeHtml(option.id)}" aria-selected="${isSelected}">${escapeHtml(option.name)}</button>`;
+  }).join('');
+  const selectedOption = options.find((option) => option.id === selectedWorkCollectionId) ?? options[0];
   return `<div class="field">
-    <div class="field-heading"><label for="episodeId">所属剧集</label></div>
-    <select id="episodeId" name="episodeId">
-      <option value="0"${selectedEpisodeId === '0' ? ' selected' : ''}>不归属剧集</option>
-      ${options}
-    </select>
+    <div class="field-heading"><span class="field-label" id="collectionId-label">所属合集</span></div>
+    <div class="collection-picker" id="collection-picker">
+      <select id="collectionId" name="collectionId" hidden aria-hidden="true" tabindex="-1">${nativeOptions}</select>
+      <button class="collection-picker-trigger${selectedOption.isScopeOption ? ' is-scope-option' : ''}" id="collection-picker-trigger" type="button" aria-labelledby="collectionId-label collection-picker-label" aria-haspopup="listbox" aria-controls="collection-picker-menu" aria-expanded="false">
+        <span class="collection-picker-label" id="collection-picker-label">${escapeHtml(selectedOption.name)}</span>
+        <span class="collection-picker-chevron" aria-hidden="true"></span>
+      </button>
+      <div class="collection-picker-menu" id="collection-picker-menu" role="listbox" aria-labelledby="collectionId-label" hidden>${pickerOptions}</div>
+    </div>
   </div>`;
 }
 

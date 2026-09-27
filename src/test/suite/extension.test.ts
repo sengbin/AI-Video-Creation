@@ -57,7 +57,7 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(savedResult?.generatedResultEnglish, 'English prompt body');
       const updatedRecord = database.updateRecord(record.id, {
         title: '修改后的记录',
-        episodeId: record.episodeId,
+        collectionId: record.collectionId,
         schema: record.schema,
         data: { title: '修改后的记录', genre: '奇幻' }
       });
@@ -75,36 +75,36 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('剧集可筛选记录并在删除时级联清理绑定数据', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-episodes-'));
+  test('合集可筛选记录并在删除时级联清理绑定数据', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collections-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     try {
-      const episode = database.createEpisode({ name: '第一集', description: '开端' });
+      const collection = database.createWorkCollection({ name: '短片主题', description: '同一主题下的作品集合' });
       const boundRecord = database.saveRecord({
-        title: '剧集记录',
+        title: '合集记录',
         categoryId: 'story',
         categoryName: '故事',
-        episodeId: episode.id,
+        collectionId: collection.id,
         schema: [],
-        data: { title: '剧集记录' }
+        data: { title: '合集记录' }
       });
       const unassignedRecord = database.saveRecord({
         title: '独立记录',
         categoryId: 'story',
         categoryName: '故事',
-        episodeId: '0',
+        collectionId: '0',
         schema: [],
         data: { title: '独立记录' }
       });
 
-      assert.strictEqual(boundRecord.episodeId, episode.id);
-      assert.deepStrictEqual(database.listRecords(undefined, episode.id), [boundRecord]);
+      assert.strictEqual(boundRecord.collectionId, collection.id);
+      assert.deepStrictEqual(database.listRecords(undefined, collection.id), [boundRecord]);
       assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
-      assert.throws(() => database.createEpisode({ name: '第一集', description: '' }), /名称已存在/);
-      assert.strictEqual(database.deleteEpisode(episode.id), true);
+      assert.throws(() => database.createWorkCollection({ name: '短片主题', description: '' }), /名称已存在/);
+      assert.strictEqual(database.deleteWorkCollection(collection.id), true);
       assert.strictEqual(database.getRecord(boundRecord.id), undefined);
       assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
-      assert.deepStrictEqual(database.listEpisodes(), []);
+      assert.deepStrictEqual(database.listWorkCollections(), []);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -146,7 +146,7 @@ suite('AI视频创作助手扩展', () => {
 
       const updatedRecord = database.updateRecord(record.id, {
         title: '编辑后的图片故事记录',
-        episodeId: record.episodeId,
+        collectionId: record.collectionId,
         schema: workflow.fields,
         data: { ...restoredValues, title: '编辑后的图片故事记录' }
       });
@@ -188,10 +188,69 @@ suite('AI视频创作助手扩展', () => {
       const [record] = database.listRecords('legacy-category');
       assert.strictEqual(record.id, 'legacy-id');
       assert.strictEqual(record.title, undefined);
-      assert.strictEqual(record.episodeId, '0');
+      assert.strictEqual(record.collectionId, '0');
       assert.strictEqual(record.updatedAt, record.createdAt);
       assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
       assert.strictEqual(record.generatedResultEnglish, undefined);
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('能够将旧版合集结构迁移并保留原有关联', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collection-migration-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    fs.mkdirSync(storagePath);
+    const databasePath = path.join(storagePath, 'prompt-records.sqlite');
+    const legacyConnection = new DatabaseSync(databasePath);
+    legacyConnection.exec(`
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO episodes VALUES (
+        'legacy-collection-id', '旧作品合集', '已保存的合集简介',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
+      );
+      CREATE TABLE prompt_records (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT,
+        category_id TEXT NOT NULL,
+        category_name TEXT NOT NULL,
+        episode_id TEXT NOT NULL,
+        schema_json TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        generated_result_chinese TEXT,
+        generated_result_english TEXT,
+        generated_result_content TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      );
+      INSERT INTO prompt_records VALUES (
+        'legacy-record-id', '旧故事章节', 'story', '故事创作', 'legacy-collection-id',
+        '[]', '{"title":"旧故事章节"}', NULL, NULL, '保留的正文',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
+      );
+    `);
+    legacyConnection.close();
+
+    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+    try {
+      assert.deepStrictEqual(database.listWorkCollections(), [{
+        id: 'legacy-collection-id',
+        name: '旧作品合集',
+        description: '已保存的合集简介',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z'
+      }]);
+      const record = database.getRecord('legacy-record-id');
+      assert.strictEqual(record?.collectionId, 'legacy-collection-id');
+      assert.strictEqual(record?.generatedResultContent, '保留的正文');
+      assert.deepStrictEqual(database.listRecords('story', 'legacy-collection-id'), [record]);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });

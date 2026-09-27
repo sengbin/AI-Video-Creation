@@ -17,8 +17,8 @@ export interface WorkflowSubmission {
   readonly values: FormValues;
   /** 与表单关联的提示词记录标识。 */
   readonly recordId?: string;
-  /** 与表单关联的剧集标识；'0' 表示不归属剧集。 */
-  readonly episodeId: string;
+  /** 与表单关联的合集标识；'0' 表示未归属合集。 */
+  readonly collectionId: string;
 }
 
 /** 保存生成结果工具接收的参数。 */
@@ -45,10 +45,10 @@ export class WorkflowSubmissionStore {
    * @param toolName 工作流工具的唯一名称。
    * @param values 已提交的表单参数。
    * @param recordId 与表单关联的提示词记录标识。
-   * @param episodeId 与表单关联的剧集标识。
+   * @param collectionId 与表单关联的合集标识。
    */
-  set(toolName: string, values: FormValues, recordId?: string, episodeId = '0'): void {
-    this.submissions.set(toolName, { values: { ...values }, recordId, episodeId });
+  set(toolName: string, values: FormValues, recordId?: string, collectionId = '0'): void {
+    this.submissions.set(toolName, { values: { ...values }, recordId, collectionId });
   }
 
   /**
@@ -106,8 +106,8 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
   ): Promise<vscode.LanguageModelToolResult> {
     const submitted = this.submissions.take(this.workflow.toolName);
     const submission = submitted
-      ? { values: submitted.values, runPrompt: true, episodeId: submitted.episodeId }
-      : await collectFormValues(this.workflow, token, {}, this.database.listEpisodes());
+      ? { values: submitted.values, runPrompt: true, collectionId: submitted.collectionId }
+      : await collectFormValues(this.workflow, token, {}, this.database.listWorkCollections());
     const values = submission?.values;
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
     const parameters = values
@@ -119,7 +119,7 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
         title: values.title,
         categoryId: this.workflow.toolName,
         categoryName: this.workflow.title,
-        episodeId: submission.episodeId,
+        collectionId: submission.collectionId,
         schema: this.workflow.fields,
         data: values
       });
