@@ -6,7 +6,9 @@ import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
-  RECORD_TITLE_FIELD
+  RECORD_TITLE_FIELD,
+  SCREENPLAY_WORKFLOW_NAME,
+  SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
 import { WorkflowSubmissionStore } from './workflowFormTool';
 
@@ -212,13 +214,14 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       throw new Error('要查看的提示词记录不存在。');
     }
 
+    const isBilingualContent = record.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME;
     const isContent = getWorkflowResultType(record.categoryId) === 'content';
     void this.panel?.webview.postMessage({
       command: 'generated-result',
       recordId: record.id,
       title: record.title || '旧记录（无标题）',
-      resultType: isContent ? 'content' : 'prompt',
-      ...(isContent
+      resultType: isBilingualContent ? 'bilingual-content' : isContent ? 'content' : 'prompt',
+      ...(isContent && !isBilingualContent
         ? { content: record.generatedResultContent ?? '' }
         : {
             contentZh: record.generatedResultChinese ?? '',
@@ -244,7 +247,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     let updatedRecord: PromptRecord | undefined;
-    if (getWorkflowResultType(record.categoryId) === 'content') {
+    if (record.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME) {
+      if (content !== undefined || typeof contentZh !== 'string' || typeof contentEn !== 'string') {
+        throw new Error('拍摄脚本必须保存中英文内容。');
+      }
+      updatedRecord = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
+    } else if (getWorkflowResultType(record.categoryId) === 'content') {
       if (typeof content !== 'string' || contentZh !== undefined || contentEn !== undefined) {
         throw new Error('该工作流只能保存单篇创作内容。');
       }
@@ -690,7 +698,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <h2 id="result-dialog-title">查看结果</h2>
       <div id="content-result-field" class="result-field" hidden>
         <div class="result-field-heading">
-          <label for="generated-content">生成内容</label>
+          <label id="generated-content-label" for="generated-content">生成内容</label>
           <button id="copy-content" class="result-copy-button" type="button" disabled>复制内容</button>
         </div>
         <textarea id="generated-content" aria-label="生成内容" rows="1" placeholder="暂无已保存的生成内容"></textarea>
@@ -698,14 +706,14 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <div id="prompt-result-fields" hidden>
         <div class="result-field">
           <div class="result-field-heading">
-            <label for="generated-result-zh">中文提示词</label>
+            <label id="generated-result-zh-label" for="generated-result-zh">中文提示词</label>
             <button id="copy-result-zh" class="result-copy-button" type="button" disabled>复制提示词</button>
           </div>
           <textarea id="generated-result-zh" aria-label="中文提示词" rows="1" placeholder="暂无已保存的中文提示词"></textarea>
         </div>
         <div class="result-field">
           <div class="result-field-heading">
-            <label for="generated-result-en">English Prompt</label>
+            <label id="generated-result-en-label" for="generated-result-en">English Prompt</label>
             <button id="copy-result-en" class="result-copy-button" type="button" disabled>复制提示词</button>
           </div>
           <textarea id="generated-result-en" aria-label="English Prompt" rows="1" placeholder="No saved English prompt"></textarea>
@@ -723,6 +731,12 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       const contentWorkflowIds = ${JSON.stringify(workflows
         .filter((workflow) => workflow.resultType === 'content')
         .map((workflow) => workflow.toolName))};
+    const bilingualContentWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME)
+      .map((workflow) => workflow.toolName))};
+    const screenplayWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.toolName === SCREENPLAY_WORKFLOW_NAME)
+      .map((workflow) => workflow.toolName))};
     const recordList = document.getElementById('record-list');
     const deleteDialog = document.getElementById('delete-dialog');
     const deleteForm = document.getElementById('delete-form');
@@ -735,8 +749,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const contentResultField = document.getElementById('content-result-field');
     const promptResultFields = document.getElementById('prompt-result-fields');
     const generatedContent = document.getElementById('generated-content');
+    const generatedContentLabel = document.getElementById('generated-content-label');
     const generatedResultZh = document.getElementById('generated-result-zh');
     const generatedResultEn = document.getElementById('generated-result-en');
+    const generatedResultZhLabel = document.getElementById('generated-result-zh-label');
+    const generatedResultEnLabel = document.getElementById('generated-result-en-label');
     const copyContentButton = document.getElementById('copy-content');
     const copyResultZhButton = document.getElementById('copy-result-zh');
     const copyResultEnButton = document.getElementById('copy-result-en');
@@ -800,17 +817,18 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 
     function openResultDialog(record) {
       const title = record.title || '旧记录（无标题）';
-      viewingResultType = contentWorkflowIds.includes(selectedCategoryId) ? 'content' : 'prompt';
-      const isContent = viewingResultType === 'content';
+      const isBilingualContent = bilingualContentWorkflowIds.includes(selectedCategoryId);
+      viewingResultType = isBilingualContent
+        ? 'bilingual-content'
+        : contentWorkflowIds.includes(selectedCategoryId) ? 'content' : 'prompt';
+      const isContent = viewingResultType !== 'prompt';
       resultDialogTitle.textContent = (isContent ? '查看作品：' : '查看提示词：') + title;
-      contentResultField.hidden = !isContent;
-      promptResultFields.hidden = isContent;
+      contentResultField.hidden = !isContent || isBilingualContent;
+      promptResultFields.hidden = isContent && !isBilingualContent;
+      configureResultLabels(selectedCategoryId, true);
       generatedContent.value = '';
       generatedResultZh.value = '';
       generatedResultEn.value = '';
-      generatedContent.placeholder = '正在读取已保存的生成内容';
-      generatedResultZh.placeholder = '正在读取已保存的中文提示词';
-      generatedResultEn.placeholder = 'Loading saved English prompt';
       resultError.textContent = '';
       resultError.hidden = true;
       isResultLoaded = false;
@@ -821,8 +839,33 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       viewingResultRecordId = record.id;
       resultDialog.showModal();
       resizeResultTextareas();
-      (isContent ? generatedContent : generatedResultZh).focus();
+      (isContent && !isBilingualContent ? generatedContent : generatedResultZh).focus();
       vscode.postMessage({ command: 'view-result', recordId: record.id });
+    }
+
+    // 按工作流更新结果字段名称、辅助标签和读取状态。
+    function configureResultLabels(workflowId, isLoading) {
+      const isShootingScript = bilingualContentWorkflowIds.includes(workflowId);
+      const isScreenplay = screenplayWorkflowIds.includes(workflowId);
+      const statusLabel = isLoading ? '正在读取已保存的' : '暂无已保存的';
+      generatedContentLabel.textContent = isScreenplay ? '剧本内容' : '生成内容';
+      generatedContent.setAttribute('aria-label', generatedContentLabel.textContent);
+      generatedContent.placeholder = statusLabel + (isScreenplay ? '剧本内容' : '生成内容');
+      generatedResultZhLabel.textContent = isShootingScript ? '拍摄脚本提示词' : '中文提示词';
+      generatedResultEnLabel.textContent = isShootingScript ? 'Shooting Script Prompt' : 'English Prompt';
+      generatedResultZh.setAttribute('aria-label', generatedResultZhLabel.textContent);
+      generatedResultEn.setAttribute('aria-label', generatedResultEnLabel.textContent);
+      generatedResultZh.placeholder = statusLabel + (isShootingScript ? '拍摄脚本提示词' : '中文提示词');
+      generatedResultEn.placeholder = isShootingScript
+        ? (isLoading ? 'Loading saved Shooting Script Prompt' : 'No saved Shooting Script Prompt')
+        : (isLoading ? 'Loading saved English prompt' : 'No saved English prompt');
+      const copyLabel = '复制提示词';
+      copyResultZhButton.textContent = copyLabel;
+      copyResultEnButton.textContent = copyLabel;
+      copyResultZhButton.title = copyLabel;
+      copyResultEnButton.title = copyLabel;
+      copyResultZhButton.setAttribute('aria-label', copyLabel);
+      copyResultEnButton.setAttribute('aria-label', copyLabel);
     }
 
     function closeResultDialog() {
@@ -963,16 +1006,15 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       if (event.data.command === 'generated-result' && event.data.recordId === viewingResultRecordId) {
         viewingResultType = event.data.resultType;
         const isContent = viewingResultType === 'content';
+        const isBilingualContent = viewingResultType === 'bilingual-content';
         contentResultField.hidden = !isContent;
-        promptResultFields.hidden = isContent;
-        resultDialogTitle.textContent = (isContent ? '查看作品：' : '查看提示词：') + event.data.title;
+        promptResultFields.hidden = isContent && !isBilingualContent;
+        resultDialogTitle.textContent = (isContent || isBilingualContent ? '查看作品：' : '查看提示词：') + event.data.title;
+        configureResultLabels(selectedCategoryId, false);
         generatedContent.value = event.data.content ?? '';
         generatedResultZh.value = event.data.contentZh ?? '';
         generatedResultEn.value = event.data.contentEn ?? '';
         resizeResultTextareas();
-        generatedContent.placeholder = '暂无已保存的生成内容';
-        generatedResultZh.placeholder = '暂无已保存的中文提示词';
-        generatedResultEn.placeholder = 'No saved English prompt';
         isResultLoaded = true;
         editResultButton.disabled = false;
         copyContentButton.disabled = false;

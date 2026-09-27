@@ -26,6 +26,8 @@ export type FormValues = Record<string, string>;
 /** 表单与工作流工具之间传递图片附件的隐藏字段名。 */
 export const IMAGE_ATTACHMENTS_FIELD = '__imageAttachments';
 export const IMAGE_STORY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_image_story_parameters';
+export const SCREENPLAY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_screenplay_parameters';
+export const SHOOTING_SCRIPT_WORKFLOW_NAME = 'ai-video-creation-tools_collect_shooting_script_parameters';
 
 export const RECORD_TITLE_FIELD: FormField = {
   name: 'title',
@@ -214,7 +216,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     ]
   },
   {
-    toolName: 'ai-video-creation-tools_collect_screenplay_parameters',
+    toolName: SCREENPLAY_WORKFLOW_NAME,
     title: '剧本创作',
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
@@ -229,7 +231,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     ]
   },
   {
-    toolName: 'ai-video-creation-tools_collect_shooting_script_parameters',
+    toolName: SHOOTING_SCRIPT_WORKFLOW_NAME,
     title: '拍摄脚本制作',
     promptPath: 'copilot-customizations/prompts/shooting-script.prompt.md',
     resultType: 'content',

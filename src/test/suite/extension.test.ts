@@ -7,7 +7,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase } from '../../database';
 import { parseImageAttachments } from '../../formPanel';
-import { formWorkflows, IMAGE_ATTACHMENTS_FIELD, IMAGE_STORY_WORKFLOW_NAME } from '../../formWorkflows';
+import {
+  formWorkflows,
+  IMAGE_ATTACHMENTS_FIELD,
+  IMAGE_STORY_WORKFLOW_NAME,
+  SHOOTING_SCRIPT_WORKFLOW_NAME
+} from '../../formWorkflows';
 import {
   GeneratedResultTool,
   SAVE_GENERATED_RESULT_TOOL_NAME,
@@ -299,18 +304,20 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('四种新增内容工作流只保存单篇创作内容', async () => {
+  test('非拍摄脚本内容工作流只保存单篇创作内容', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-content-results-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
     const contentWorkflows = formWorkflows.filter((workflow) =>
-      workflow.resultType === 'content' && workflow.toolName !== IMAGE_STORY_WORKFLOW_NAME
+      workflow.resultType === 'content' &&
+      workflow.toolName !== IMAGE_STORY_WORKFLOW_NAME &&
+      workflow.toolName !== SHOOTING_SCRIPT_WORKFLOW_NAME
     );
 
     try {
       assert.deepStrictEqual(contentWorkflows.map((workflow) => workflow.title), [
-        '创意写故事', '小说重创作', '剧本创作', '拍摄脚本制作'
+        '创意写故事', '小说重创作', '剧本创作'
       ]);
       for (const workflow of contentWorkflows) {
         const record = database.saveRecord({
@@ -331,6 +338,47 @@ suite('AI视频创作助手扩展', () => {
         assert.strictEqual(savedRecord?.generatedResultChinese, undefined);
         assert.strictEqual(savedRecord?.generatedResultEnglish, undefined);
       }
+    } finally {
+      cancellationSource.dispose();
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('拍摄脚本分别保存中文和英文作品内容', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-shooting-result-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const record = database.saveRecord({
+      title: '双语拍摄脚本',
+      categoryId: SHOOTING_SCRIPT_WORKFLOW_NAME,
+      categoryName: '拍摄脚本制作',
+      schema: [],
+      data: { title: '双语拍摄脚本' }
+    });
+    const tool = new GeneratedResultTool(database);
+    const cancellationSource = new vscode.CancellationTokenSource();
+
+    try {
+      await tool.invoke({
+        input: {
+          recordId: record.id,
+          contentZh: '中文拍摄脚本正文',
+          contentEn: 'English shooting script body'
+        },
+        toolInvocationToken: undefined
+      }, cancellationSource.token);
+
+      const savedRecord = database.getRecord(record.id);
+      assert.strictEqual(savedRecord?.generatedResultChinese, '中文拍摄脚本正文');
+      assert.strictEqual(savedRecord?.generatedResultEnglish, 'English shooting script body');
+      assert.strictEqual(savedRecord?.generatedResultContent, undefined);
+      await assert.rejects(
+        tool.invoke({
+          input: { recordId: record.id, content: '不能作为单篇内容保存' },
+          toolInvocationToken: undefined
+        }, cancellationSource.token),
+        /必须提交中英文内容/
+      );
     } finally {
       cancellationSource.dispose();
       database.dispose();
@@ -621,6 +669,8 @@ suite('AI视频创作助手扩展', () => {
       }
       if (promptName === 'shooting-script.prompt.md') {
         assert.ok(promptContent.includes('每个镜头均包含可单独用于视频生成的动态画面提示词'));
+        assert.ok(promptContent.includes('完整的中文拍摄脚本和英文拍摄脚本'));
+        assert.ok(promptContent.includes('中文正文提交到 `contentZh`，英文正文提交到 `contentEn`'));
       }
     }
 
@@ -633,6 +683,10 @@ suite('AI视频创作助手扩展', () => {
     const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'promptRecordsView.ts'), 'utf8');
     assert.ok(recordsViewSource.includes("const resultLabel = '查看'"));
     assert.ok(recordsViewSource.includes('id="generated-content" aria-label="生成内容"'));
+    assert.ok(recordsViewSource.includes("'bilingual-content'"));
+    assert.ok(recordsViewSource.includes("isScreenplay ? '剧本内容' : '生成内容'"));
+    assert.ok(recordsViewSource.includes("isShootingScript ? '拍摄脚本提示词' : '中文提示词'"));
+    assert.ok(recordsViewSource.includes("isShootingScript ? 'Shooting Script Prompt' : 'English Prompt'"));
     assert.ok(recordsViewSource.includes('id="prompt-result-fields" hidden'));
   });
 });

@@ -5,7 +5,8 @@ import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
-  IMAGE_ATTACHMENTS_FIELD
+  IMAGE_ATTACHMENTS_FIELD,
+  SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
 
 type EmptyToolInput = Record<string, never>;
@@ -189,7 +190,18 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
     }
 
     let record: ReturnType<PromptDatabase['getRecord']>;
-    if (getWorkflowResultType(existingRecord.categoryId) === 'content') {
+    if (existingRecord.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME) {
+      if (content !== undefined) {
+        throw new Error('拍摄脚本必须提交中英文内容，不接受单篇创作内容。');
+      }
+      if (typeof contentZh !== 'string' || contentZh.trim().length === 0) {
+        throw new Error('拍摄脚本中文内容不能为空。');
+      }
+      if (typeof contentEn !== 'string' || contentEn.trim().length === 0) {
+        throw new Error('拍摄脚本英文内容不能为空。');
+      }
+      record = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
+    } else if (getWorkflowResultType(existingRecord.categoryId) === 'content') {
       if (typeof content !== 'string' || content.trim().length === 0) {
         throw new Error('创作内容不能为空。');
       }
