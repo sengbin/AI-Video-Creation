@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { WorkCollection, PromptDatabase, PromptRecord } from './database';
-import { collectFormValues, FormSubmission } from './formPanel';
+import { collectFormValues, EpisodeNumberValidationContext, FormSubmission } from './formPanel';
 import {
   FormField,
   FormValues,
@@ -348,7 +348,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       title: `添加${workflow.title}信息`,
       notice: '填写信息后可保存，或保存并运行对应提示词。'
     };
-    const submission = await collectViewForm(formWorkflow, undefined, this.database.listWorkCollections());
+    const submission = await collectViewForm(
+      formWorkflow,
+      createEpisodeNumberValidationContext(this.database),
+      undefined,
+      this.database.listWorkCollections()
+    );
     if (!submission) {
       return;
     }
@@ -358,13 +363,14 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       categoryId: workflow.toolName,
       categoryName: workflow.title,
       collectionId: submission.collectionId,
+      episodeNumber: submission.episodeNumber,
       schema: workflow.fields,
       data: submission.values
     });
     this.selectedCategoryId = workflow.toolName;
     this.postState();
     if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id);
+      await this.runSubmittedPrompt(workflow, submission.values, record.id, submission.episodeNumber);
     }
   }
 
@@ -395,7 +401,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       notice: '可直接保存当前内容，也可以修改后保存；选择保存并运行时将使用这些参数运行提示词。',
       fields
     };
-    const submission = await collectViewForm(editWorkflow, initialValues, this.database.listWorkCollections());
+    const submission = await collectViewForm(
+      editWorkflow,
+      createEpisodeNumberValidationContext(this.database, record.id, record.episodeNumber),
+      initialValues,
+      this.database.listWorkCollections()
+    );
     if (!submission) {
       return;
     }
@@ -403,6 +414,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     const updatedRecord = this.database.updateRecord(record.id, {
       title: submission.values.title,
       collectionId: submission.collectionId,
+      episodeNumber: submission.episodeNumber,
       schema: fields,
       data: submission.values
     });
@@ -413,7 +425,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     this.selectedCategoryId = record.categoryId;
     this.postState();
     if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id);
+      await this.runSubmittedPrompt(workflow, submission.values, record.id, submission.episodeNumber);
     }
   }
 
@@ -421,10 +433,17 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private async runSubmittedPrompt(
     workflow: FormWorkflow,
     values: FormValues,
-    recordId: string
+    recordId: string,
+    episodeNumber: number | undefined
   ): Promise<void> {
     const record = this.database.getRecord(recordId);
-    this.submissions.set(workflow.toolName, values, recordId, record?.collectionId ?? '0');
+    this.submissions.set(
+      workflow.toolName,
+      values,
+      recordId,
+      record?.collectionId ?? '0',
+      episodeNumber
+    );
     const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
     try {
       await vscode.commands.executeCommand('workbench.action.chat.run.prompt.current', promptUri);
@@ -586,15 +605,31 @@ function errorMessage(error: unknown): string {
 
 async function collectViewForm(
   workflow: FormWorkflow,
+  episodeContext: EpisodeNumberValidationContext,
   initialValues?: FormValues,
   collections: readonly WorkCollection[] = []
 ): Promise<FormSubmission | undefined> {
   const cancellationSource = new vscode.CancellationTokenSource();
   try {
-    return await collectFormValues(workflow, cancellationSource.token, initialValues, collections);
+    return await collectFormValues(workflow, cancellationSource.token, episodeContext, initialValues, collections);
   } finally {
     cancellationSource.dispose();
   }
+}
+
+/** 从数据库构造表单集数校验所需的当前记录快照和实时查询入口。 */
+function createEpisodeNumberValidationContext(
+  database: PromptDatabase,
+  currentRecordId?: string,
+  initialEpisodeNumber?: number
+): EpisodeNumberValidationContext {
+  return {
+    records: database.listEpisodeNumberRecords(),
+    currentRecordId,
+    initialEpisodeNumber,
+    findConflict: (collectionId, categoryId, episodeNumber, excludeRecordId) =>
+      database.findEpisodeNumberConflict(collectionId, categoryId, episodeNumber, excludeRecordId)
+  };
 }
 
 function createCategoryHtml(): string {
@@ -773,7 +808,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .record-title { font-weight: 500; }
     .record-title-button {
       display: block; width: 100%; padding: 5px 0; overflow: hidden; text-align: left; text-overflow: ellipsis;
-      white-space: nowrap; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer;
+      white-space: nowrap; border: 0; color: var(--vscode-textLink-foreground); background: transparent; font: inherit; cursor: pointer;
     }
     .record-title-button:hover { color: var(--vscode-textLink-foreground); text-decoration: underline; }
     .record-title-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
@@ -835,7 +870,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .collection-form textarea { min-height: 120px; resize: vertical; }
     .collection-form input:focus, .collection-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
     .collection-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
-    .collection-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .collection-form-actions { display: flex; justify-content: flex-start; gap: 8px; }
     .delete-button {
       min-width: 44px; padding: 5px 8px; border: 0; border-radius: 3px;
       color: var(--vscode-errorForeground); background: transparent;

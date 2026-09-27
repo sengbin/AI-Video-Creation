@@ -19,6 +19,8 @@ export interface WorkflowSubmission {
   readonly recordId?: string;
   /** 与表单关联的合集标识；'0' 表示未归属合集。 */
   readonly collectionId: string;
+  /** 当前合集中的集数；未归属合集或视觉资产不设置。 */
+  readonly episodeNumber: number | undefined;
 }
 
 /** 保存生成结果工具接收的参数。 */
@@ -46,9 +48,16 @@ export class WorkflowSubmissionStore {
    * @param values 已提交的表单参数。
    * @param recordId 与表单关联的提示词记录标识。
    * @param collectionId 与表单关联的合集标识。
+  * @param episodeNumber 与合集关联的集数。
    */
-  set(toolName: string, values: FormValues, recordId?: string, collectionId = '0'): void {
-    this.submissions.set(toolName, { values: { ...values }, recordId, collectionId });
+  set(
+    toolName: string,
+    values: FormValues,
+    recordId?: string,
+    collectionId = '0',
+    episodeNumber?: number
+  ): void {
+    this.submissions.set(toolName, { values: { ...values }, recordId, collectionId, episodeNumber });
   }
 
   /**
@@ -106,13 +115,31 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
   ): Promise<vscode.LanguageModelToolResult> {
     const submitted = this.submissions.take(this.workflow.toolName);
     const submission = submitted
-      ? { values: submitted.values, runPrompt: true, collectionId: submitted.collectionId }
-      : await collectFormValues(this.workflow, token, {}, this.database.listWorkCollections());
+      ? {
+        values: submitted.values,
+        runPrompt: true,
+        collectionId: submitted.collectionId,
+        episodeNumber: submitted.episodeNumber
+      }
+      : await collectFormValues(
+        this.workflow,
+        token,
+        {
+          records: this.database.listEpisodeNumberRecords(),
+          findConflict: (collectionId, categoryId, episodeNumber, excludeRecordId) =>
+            this.database.findEpisodeNumberConflict(collectionId, categoryId, episodeNumber, excludeRecordId)
+        },
+        {},
+        this.database.listWorkCollections()
+      );
     const values = submission?.values;
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
-    const parameters = values
+    const parameters: Record<string, string | number> | undefined = values
       ? Object.fromEntries(Object.entries(values).filter(([name]) => name !== IMAGE_ATTACHMENTS_FIELD))
       : undefined;
+    if (parameters && submission?.episodeNumber !== undefined) {
+      parameters.episodeNumber = submission.episodeNumber;
+    }
     let recordId = submitted?.recordId;
     if (values && !submitted) {
       const record = this.database.saveRecord({
@@ -120,6 +147,7 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
         categoryId: this.workflow.toolName,
         categoryName: this.workflow.title,
         collectionId: submission.collectionId,
+        episodeNumber: submission.episodeNumber,
         schema: this.workflow.fields,
         data: values
       });

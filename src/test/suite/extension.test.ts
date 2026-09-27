@@ -111,6 +111,90 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
+  test('合集集数必须是正整数且唯一，改绑时检查目标合集冲突', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-episode-number-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    try {
+      const firstCollection = database.createWorkCollection({ name: '第一部作品', description: '' });
+      const secondCollection = database.createWorkCollection({ name: '第二部作品', description: '' });
+      const firstRecord = database.saveRecord({
+        title: '相遇',
+        categoryId: 'story',
+        categoryName: '创意写故事',
+        collectionId: firstCollection.id,
+        episodeNumber: 1,
+        schema: [],
+        data: { title: '相遇' }
+      });
+      const screenplayRecord = database.saveRecord({
+        title: '相遇剧本',
+        categoryId: 'screenplay',
+        categoryName: '剧本创作',
+        collectionId: firstCollection.id,
+        episodeNumber: 1,
+        schema: [],
+        data: { title: '相遇剧本' }
+      });
+      const otherCollectionRecord = database.saveRecord({
+        title: '序章',
+        categoryId: 'story',
+        categoryName: '创意写故事',
+        collectionId: secondCollection.id,
+        episodeNumber: 1,
+        schema: [],
+        data: { title: '序章' }
+      });
+
+      assert.strictEqual(database.getRecord(firstRecord.id)?.episodeNumber, 1);
+      assert.strictEqual(screenplayRecord.episodeNumber, 1);
+      assert.strictEqual(database.findEpisodeNumberConflict(firstCollection.id, 'screenplay', 1)?.id, screenplayRecord.id);
+      assert.strictEqual(database.findEpisodeNumberConflict(firstCollection.id, 'story', 1)?.id, firstRecord.id);
+      assert.throws(() => database.saveRecord({
+        title: '重复集数',
+        categoryId: 'story',
+        categoryName: '创意写故事',
+        collectionId: firstCollection.id,
+        episodeNumber: 1,
+        schema: [],
+        data: { title: '重复集数' }
+      }), /第一部作品.*第 1 集.*相遇.*创意写故事/);
+      assert.throws(() => database.updateRecord(otherCollectionRecord.id, {
+        title: '序章',
+        collectionId: firstCollection.id,
+        episodeNumber: 1,
+        schema: [],
+        data: { title: '序章' }
+      }), /第一部作品.*第 1 集.*相遇/);
+      assert.throws(() => database.saveRecord({
+        title: '小数集数',
+        categoryId: 'story',
+        categoryName: '创意写故事',
+        collectionId: firstCollection.id,
+        episodeNumber: 1.5,
+        schema: [],
+        data: { title: '小数集数' }
+      }), /大于或等于 1 的整数/);
+
+      const visualAsset = database.saveRecord({
+        title: '主角设定',
+        categoryId: 'character',
+        categoryName: '角色生成',
+        collectionId: firstCollection.id,
+        schema: [],
+        data: { title: '主角设定' }
+      });
+      assert.strictEqual(visualAsset.episodeNumber, undefined);
+      assert.deepStrictEqual(
+        new Set(database.listEpisodeNumberRecords()
+          .map((record) => `${record.collectionName}:${record.categoryId}:${record.episodeNumber}`)),
+        new Set(['第一部作品:story:1', '第一部作品:screenplay:1', '第二部作品:story:1'])
+      );
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('图片附件会随记录保存并在重新打开数据库后恢复', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-image-record-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');

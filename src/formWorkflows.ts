@@ -17,6 +17,8 @@ export interface FormWorkflow {
   readonly fields: readonly FormField[];
   /** 参数表单是否接受用户附加图片。 */
   readonly supportsImageAttachments?: boolean;
+  /** 是否需要按合集记录集数；视觉资产工作流设为 false。 */
+  readonly supportsEpisodeNumber?: boolean;
 }
 
 export type WorkflowResultType = 'content' | 'prompt';
@@ -151,6 +153,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '角色生成',
     promptPath: 'copilot-customizations/prompts/character-generation.prompt.md',
     resultType: 'prompt',
+    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -170,6 +173,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '场景生成',
     promptPath: 'copilot-customizations/prompts/scene-generation.prompt.md',
     resultType: 'prompt',
+    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -187,6 +191,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '道具生成',
     promptPath: 'copilot-customizations/prompts/prop-generation.prompt.md',
     resultType: 'prompt',
+    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -203,6 +208,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '特效生成',
     promptPath: 'copilot-customizations/prompts/effect-generation.prompt.md',
     resultType: 'prompt',
+    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,

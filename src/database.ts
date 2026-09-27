@@ -9,6 +9,8 @@ export interface NewPromptRecord {
   readonly categoryName: string;
   /** 合集标识；缺省或 '0' 表示未归属合集。 */
   readonly collectionId?: string;
+  /** 记录所属合集中的集数。 */
+  readonly episodeNumber?: number;
   readonly schema: unknown;
   readonly data: unknown;
 }
@@ -21,6 +23,7 @@ export interface PromptRecord {
   readonly categoryName: string;
   /** 合集标识；'0' 表示未归属合集。 */
   readonly collectionId: string;
+  readonly episodeNumber: number | undefined;
   readonly schema: unknown;
   readonly data: unknown;
   readonly generatedResultChinese: string | undefined;
@@ -35,6 +38,8 @@ export interface UpdatedPromptRecord {
   readonly title: string;
   /** 新合集标识；'0' 表示未归属合集。 */
   readonly collectionId: string;
+  /** 更新后的集数。 */
+  readonly episodeNumber?: number;
   readonly schema: unknown;
   readonly data: unknown;
 }
@@ -46,6 +51,17 @@ export interface WorkCollection {
   readonly description: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** 表示合集内已占用集数的任务记录。 */
+export interface EpisodeNumberRecord {
+  readonly id: string;
+  readonly title: string | undefined;
+  readonly categoryId: string;
+  readonly categoryName: string;
+  readonly collectionId: string;
+  readonly collectionName: string;
+  readonly episodeNumber: number;
 }
 
 /** 创建合集时需要保存的字段。 */
@@ -60,6 +76,7 @@ interface StoredPromptRecord {
   readonly category_id: string;
   readonly category_name: string;
   readonly collection_id: string;
+  readonly episode_number: number | null;
   readonly schema_json: string;
   readonly data_json: string;
   readonly generated_result_chinese: string | null;
@@ -97,6 +114,7 @@ export class PromptDatabase implements vscode.Disposable {
           category_id TEXT NOT NULL,
           category_name TEXT NOT NULL,
           collection_id TEXT NOT NULL DEFAULT '0',
+          episode_number INTEGER,
           schema_json TEXT NOT NULL,
           data_json TEXT NOT NULL,
           generated_result_chinese TEXT,
@@ -124,9 +142,12 @@ export class PromptDatabase implements vscode.Disposable {
   saveRecord(input: NewPromptRecord): PromptRecord {
     const collectionId = input.collectionId ?? '0';
     this.assertWorkCollectionExists(collectionId);
+    this.assertEpisodeNumberValid(input.episodeNumber);
+    this.assertEpisodeNumberAvailable(collectionId, input.categoryId, input.episodeNumber);
     const record = {
       ...input,
       collectionId,
+      episodeNumber: input.episodeNumber,
       id: randomUUID(),
       createdAt: new Date().toISOString()
     };
@@ -135,14 +156,15 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.connection.prepare(`
       INSERT INTO prompt_records (
-        id, title, category_id, category_name, collection_id, schema_json, data_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, title, category_id, category_name, collection_id, episode_number, schema_json, data_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.title,
       record.categoryId,
       record.categoryName,
       record.collectionId,
+      record.episodeNumber ?? null,
       schemaJson,
       dataJson,
       record.createdAt,
@@ -195,6 +217,75 @@ export class PromptDatabase implements vscode.Disposable {
     return row ? readRecord(row) : undefined;
   }
 
+  /** 查询已绑定合集的集数记录，用于表单即时校验。 */
+  listEpisodeNumberRecords(): EpisodeNumberRecord[] {
+    const rows = this.connection.prepare(`
+      SELECT records.id, records.title, records.category_id, records.category_name, records.collection_id,
+        collections.name AS collection_name, records.episode_number
+      FROM prompt_records AS records
+      INNER JOIN collections ON collections.id = records.collection_id
+      WHERE records.episode_number IS NOT NULL
+      ORDER BY records.collection_id, records.episode_number
+    `).all() as {
+      id: string;
+      title: string | null;
+      category_id: string;
+      category_name: string;
+      collection_id: string;
+      collection_name: string;
+      episode_number: number;
+    }[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title ?? undefined,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      collectionId: row.collection_id,
+      collectionName: row.collection_name,
+      episodeNumber: row.episode_number
+    }));
+  }
+
+  /** 查询指定合集和集数的冲突记录，可排除正在编辑的记录。 */
+  findEpisodeNumberConflict(
+    collectionId: string,
+    categoryId: string,
+    episodeNumber: number,
+    excludeRecordId?: string
+  ): EpisodeNumberRecord | undefined {
+    if (collectionId === '0') {
+      return undefined;
+    }
+    const row = this.connection.prepare(`
+      SELECT records.id, records.title, records.category_id, records.category_name, records.collection_id,
+        collections.name AS collection_name, records.episode_number
+      FROM prompt_records AS records
+      INNER JOIN collections ON collections.id = records.collection_id
+      WHERE records.collection_id = ? AND records.category_id = ? AND records.episode_number = ?
+        AND (? IS NULL OR records.id <> ?)
+      LIMIT 1
+    `).get(collectionId, categoryId, episodeNumber, excludeRecordId ?? null, excludeRecordId ?? null) as {
+      id: string;
+      title: string | null;
+      category_id: string;
+      category_name: string;
+      collection_id: string;
+      collection_name: string;
+      episode_number: number;
+    } | undefined;
+
+    return row ? {
+      id: row.id,
+      title: row.title ?? undefined,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      collectionId: row.collection_id,
+      collectionName: row.collection_name,
+      episodeNumber: row.episode_number
+    } : undefined;
+  }
+
   /**
    * 更新记录标题、字段模板和数据。
    * @param id 记录标识。
@@ -203,14 +294,19 @@ export class PromptDatabase implements vscode.Disposable {
    */
   updateRecord(id: string, input: UpdatedPromptRecord): PromptRecord | undefined {
     this.assertWorkCollectionExists(input.collectionId);
+    this.assertEpisodeNumberValid(input.episodeNumber);
+    const existingRecord = this.getRecord(id);
+    if (existingRecord) {
+      this.assertEpisodeNumberAvailable(input.collectionId, existingRecord.categoryId, input.episodeNumber, id);
+    }
     const schemaJson = serializeJson(input.schema, 'schema');
     const dataJson = serializeJson(input.data, 'data');
     const updatedAt = new Date().toISOString();
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET title = ?, collection_id = ?, schema_json = ?, data_json = ?, updated_at = ?
+      SET title = ?, collection_id = ?, episode_number = ?, schema_json = ?, data_json = ?, updated_at = ?
       WHERE id = ?
-    `).run(input.title, input.collectionId, schemaJson, dataJson, updatedAt, id);
+    `).run(input.title, input.collectionId, input.episodeNumber ?? null, schemaJson, dataJson, updatedAt, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -408,6 +504,31 @@ export class PromptDatabase implements vscode.Disposable {
     }
   }
 
+  /** 确保已填写的集数为正安全整数。 */
+  private assertEpisodeNumberValid(episodeNumber: number | undefined): void {
+    if (episodeNumber !== undefined && (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1)) {
+      throw new Error('集数必须是大于或等于 1 的整数。');
+    }
+  }
+
+  /** 阻止同一合集内的任务重复占用集数。 */
+  private assertEpisodeNumberAvailable(
+    collectionId: string,
+    categoryId: string,
+    episodeNumber: number | undefined,
+    excludeRecordId?: string
+  ): void {
+    if (episodeNumber === undefined) {
+      return;
+    }
+    const conflict = this.findEpisodeNumberConflict(collectionId, categoryId, episodeNumber, excludeRecordId);
+    if (conflict) {
+      throw new Error(
+        `合集“${conflict.collectionName}”的第 ${episodeNumber} 集已被同类任务“${conflict.title ?? '未命名任务'}”（${conflict.categoryName}）占用。请更改集数或选择其他合集。`
+      );
+    }
+  }
+
   /**
    * 关闭数据库连接。
    */
@@ -433,6 +554,7 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
     categoryId: row.category_id,
     categoryName: row.category_name,
     collectionId: row.collection_id,
+    episodeNumber: row.episode_number ?? undefined,
     schema: JSON.parse(row.schema_json) as unknown,
     data: JSON.parse(row.data_json) as unknown,
     generatedResultChinese: row.generated_result_chinese ?? undefined,
@@ -496,6 +618,9 @@ function migratePromptRecords(connection: DatabaseSync): void {
     if (!columnNames.has('collection_id')) {
       connection.exec("ALTER TABLE prompt_records ADD COLUMN collection_id TEXT NOT NULL DEFAULT '0'");
     }
+    if (!columnNames.has('episode_number')) {
+      connection.exec('ALTER TABLE prompt_records ADD COLUMN episode_number INTEGER');
+    }
     if (!columnNames.has('generated_result_chinese')) {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_chinese TEXT');
     }
@@ -528,6 +653,10 @@ function migratePromptRecords(connection: DatabaseSync): void {
       WHERE collection_id IS NULL OR collection_id = '';
       CREATE INDEX IF NOT EXISTS prompt_records_category_updated_idx
         ON prompt_records (category_id, updated_at DESC);
+      DROP INDEX IF EXISTS prompt_records_collection_episode_unique_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS prompt_records_collection_task_episode_unique_idx
+        ON prompt_records (collection_id, category_id, episode_number)
+        WHERE collection_id <> '0' AND episode_number IS NOT NULL;
     `);
     connection.exec('COMMIT');
   } catch (error) {

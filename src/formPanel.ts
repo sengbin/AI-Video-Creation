@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WorkCollection } from './database';
+import { EpisodeNumberRecord, WorkCollection } from './database';
 import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
@@ -22,6 +22,21 @@ export interface FormSubmission {
   readonly runPrompt: boolean;
   /** 表单所选合集；'0' 表示未归属合集。 */
   readonly collectionId: string;
+  /** 已选择合集时的正整数集数。 */
+  readonly episodeNumber: number | undefined;
+}
+
+/** 表单检查合集内集数冲突所需的数据。 */
+export interface EpisodeNumberValidationContext {
+  readonly records: readonly EpisodeNumberRecord[];
+  readonly currentRecordId?: string;
+  readonly initialEpisodeNumber?: number;
+  readonly findConflict: (
+    collectionId: string,
+    categoryId: string,
+    episodeNumber: number,
+    excludeRecordId?: string
+  ) => EpisodeNumberRecord | undefined;
 }
 
 /**
@@ -89,6 +104,7 @@ export function parseImageAttachments(value: string | undefined): FormImageAttac
 export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
+  episodeContext: EpisodeNumberValidationContext,
   initialValues: FormValues = {},
   collections: readonly WorkCollection[] = []
 ): Promise<FormSubmission | undefined> {
@@ -106,7 +122,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(workflow, initialValues, collections);
+  panel.webview.html = createFormHtml(workflow, initialValues, collections, episodeContext);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -140,14 +156,65 @@ export function collectFormValues(
       }
 
       const values = readFormValues(message.values, workflow);
-        const collectionId = message.collectionId;
-        if (!values || typeof collectionId !== 'string' ||
+      const collectionId = message.collectionId;
+      if (!values || typeof collectionId !== 'string' ||
           (collectionId !== '0' && !collections.some((collection) => collection.id === collectionId))) {
         void panel.webview.postMessage({
           command: 'validation-error',
           text: '表单数据无效，请检查后重新提交。'
         });
         return;
+      }
+
+      const requiresEpisodeNumber = workflow.supportsEpisodeNumber !== false && collectionId !== '0';
+      const episodeNumberValue = message.episodeNumber;
+      let episodeNumber: number | undefined;
+      if (episodeNumberValue !== undefined && episodeNumberValue !== '') {
+        if (typeof episodeNumberValue !== 'string' || !/^[0-9]+$/.test(episodeNumberValue)) {
+          void panel.webview.postMessage({
+            command: 'validation-error',
+            text: '“当前集数”必须填写大于或等于 1 的整数。'
+          });
+          return;
+        }
+        episodeNumber = Number(episodeNumberValue);
+        if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1) {
+          void panel.webview.postMessage({
+            command: 'validation-error',
+            text: '“当前集数”必须填写大于或等于 1 的整数。'
+          });
+          return;
+        }
+      }
+      if (requiresEpisodeNumber && episodeNumber === undefined) {
+        const collectionName = collections.find((collection) => collection.id === collectionId)?.name;
+        void panel.webview.postMessage({
+          command: 'validation-error',
+          text: `已选择合集“${collectionName}”，必须填写“当前集数”，且只能填写大于或等于 1 的整数。`
+        });
+        return;
+      }
+      if (!requiresEpisodeNumber && episodeNumber !== undefined) {
+        void panel.webview.postMessage({
+          command: 'validation-error',
+          text: '当前任务或未归属合集不能设置集数，请检查合集选择。'
+        });
+        return;
+      }
+      if (episodeNumber !== undefined) {
+        const conflict = episodeContext.findConflict(
+          collectionId,
+          workflow.toolName,
+          episodeNumber,
+          episodeContext.currentRecordId
+        );
+        if (conflict) {
+          void panel.webview.postMessage({
+            command: 'validation-error',
+            text: formatEpisodeNumberConflict(conflict)
+          });
+          return;
+        }
       }
 
       if (message.command === 'submit' && workflow.supportsImageAttachments &&
@@ -159,7 +226,7 @@ export function collectFormValues(
         return;
       }
 
-      finish({ values, runPrompt: message.command === 'submit', collectionId });
+      finish({ values, runPrompt: message.command === 'submit', collectionId, episodeNumber });
     }));
   });
 }
@@ -204,7 +271,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function createFormHtml(
   workflow: FormWorkflow,
   initialValues: FormValues,
-  collections: readonly WorkCollection[]
+  collections: readonly WorkCollection[],
+  episodeContext: EpisodeNumberValidationContext
 ): string {
   const nonce = createNonce();
   const imageAttachments = workflow.supportsImageAttachments
@@ -222,6 +290,11 @@ function createFormHtml(
     renderField(field, initialValues[field.name] ?? '')
   ).join('');
   const collectionField = renderWorkCollectionField(collections, initialValues.collectionId ?? '0');
+  const episodeNumberField = renderEpisodeNumberField(
+    workflow.supportsEpisodeNumber !== false,
+    initialValues.collectionId ?? '0',
+    episodeContext.initialEpisodeNumber
+  );
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -269,16 +342,26 @@ function createFormHtml(
     .image-status { min-height: 0; margin: 6px 0 0; color: var(--vscode-errorForeground); font-size: 12px; }
     .image-status:empty { display: none; }
     .field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
+    .field[hidden] { display: none; }
     .field-heading { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
     label { font-size: 13px; font-weight: 600; }
     .field-label { font-size: 13px; font-weight: 600; }
     .field-description { color: var(--vscode-foreground); opacity: .82; font-size: 12px; }
+    .episode-number-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
+    .episode-number-error:empty { display: none; }
     textarea, select {
       width: 100%; resize: none; padding: 9px 10px;
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit; line-height: 1.45;
     }
+    #episode-number {
+      width: 100%; min-height: 38px; padding: 9px 10px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 3px; font: inherit; line-height: 1.45;
+    }
+    #episode-number:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     textarea { max-height: calc(17.4em + 20px); overflow-y: auto; }
     select { min-height: 38px; resize: none; }
     .collection-picker { position: relative; width: 100%; }
@@ -332,12 +415,15 @@ function createFormHtml(
     .custom-option[hidden] { display: none; }
     textarea:focus, select:focus, .custom-option:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
-    .actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+    .actions { display: flex; align-items: center; justify-content: flex-end; gap: 24px; padding-top: 4px; }
+    .secondary-actions { display: flex; align-items: center; gap: 8px; }
     button { min-height: 30px; padding: 5px 13px; border: 0; border-radius: 3px; font: inherit; cursor: pointer; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
     button:disabled { opacity: .65; cursor: wait; }
     .secondary { color: #273746; background: #E8EDF2; }
     .secondary:hover { background: #DDE4EA; }
+    .secondary-actions #save { color: var(--vscode-button-foreground); background: var(--vscode-button-background); font-weight: 600; }
+    .secondary-actions #save:hover { background: var(--vscode-button-hoverBackground); }
     .primary { color: #18374A; background: #D7EAF5; }
     .primary:hover { background: #C8E0EE; }
     #status { min-height: 20px; color: var(--vscode-errorForeground); }
@@ -353,12 +439,15 @@ function createFormHtml(
     <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
       ${collectionField}
+      ${episodeNumberField}
       ${imageAttachmentField}
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
       <div class="actions">
-        <button class="secondary" id="cancel" type="button">取消</button>
-        <button class="secondary" id="save" type="button">保存</button>
+        <div class="secondary-actions">
+          <button class="secondary" id="cancel" type="button">取消</button>
+          <button class="secondary" id="save" type="button">保存</button>
+        </div>
         <button class="primary" id="submit" type="submit">保存并运行</button>
       </div>
     </form>
@@ -376,6 +465,63 @@ function createFormHtml(
     const collectionPickerLabel = document.getElementById('collection-picker-label');
     const collectionPickerMenu = document.getElementById('collection-picker-menu');
     const collectionPickerOptions = Array.from(collectionPickerMenu.querySelectorAll('[role="option"]'));
+    const supportsEpisodeNumber = ${workflow.supportsEpisodeNumber !== false};
+    const episodeNumberField = document.getElementById('episode-number-field');
+    const episodeNumberInput = document.getElementById('episode-number');
+    const episodeNumberError = document.getElementById('episode-number-error');
+    const episodeNumberRecords = ${serializeForScript(episodeContext.records)};
+    const currentRecordId = ${serializeForScript(episodeContext.currentRecordId ?? '')};
+    const workflowCategoryId = ${serializeForScript(workflow.toolName)};
+
+    // 按当前合集、任务类型、集数和编辑记录标识查找本地冲突。
+    function findLocalEpisodeConflict(collectionId, rawEpisodeNumber) {
+      if (!supportsEpisodeNumber || collectionId === '0' || !/^[0-9]+$/.test(rawEpisodeNumber)) {
+        return undefined;
+      }
+      const episodeNumber = Number(rawEpisodeNumber);
+      if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1) {
+        return undefined;
+      }
+      return episodeNumberRecords.find((record) =>
+        record.collectionId === collectionId && record.categoryId === workflowCategoryId &&
+        record.episodeNumber === episodeNumber &&
+        record.id !== currentRecordId
+      );
+    }
+
+    // 将冲突记录转换为用户可直接处理的提示。
+    function formatLocalEpisodeConflict(record) {
+      return '合集“' + record.collectionName + '”的第 ' + record.episodeNumber +
+        ' 集已被同类任务“' + (record.title || '未命名任务') + '”（' + record.categoryName +
+        '）占用。请更改集数或选择其他合集。';
+    }
+
+    // 显示或隐藏集数字段，并同步集数输入框的原生校验状态。
+    function updateEpisodeNumberField() {
+      if (!supportsEpisodeNumber) return undefined;
+      const isRequired = collectionSelect.value !== '0';
+      episodeNumberField.hidden = !isRequired;
+      episodeNumberInput.disabled = !isRequired;
+      episodeNumberInput.required = isRequired;
+      if (!isRequired) {
+        episodeNumberInput.value = '';
+        episodeNumberError.textContent = '';
+        episodeNumberInput.setCustomValidity('');
+        return undefined;
+      }
+
+      const rawEpisodeNumber = episodeNumberInput.value;
+      let validationMessage;
+      if (!/^[0-9]+$/.test(rawEpisodeNumber) || !Number.isSafeInteger(Number(rawEpisodeNumber)) || Number(rawEpisodeNumber) < 1) {
+        validationMessage = '已选择合集，必须填写“当前集数”，且只能填写大于或等于 1 的整数。';
+      } else {
+        const conflict = findLocalEpisodeConflict(collectionSelect.value, rawEpisodeNumber);
+        if (conflict) validationMessage = formatLocalEpisodeConflict(conflict);
+      }
+      episodeNumberError.textContent = validationMessage ?? '';
+      episodeNumberInput.setCustomValidity(validationMessage ?? '');
+      return validationMessage;
+    }
 
     function closeCollectionPicker(returnFocus = false) {
       collectionPickerMenu.hidden = true;
@@ -402,6 +548,13 @@ function createFormHtml(
     });
     collectionPickerOptions.forEach((option, index) => {
       option.addEventListener('click', () => {
+        const conflict = supportsEpisodeNumber
+          ? findLocalEpisodeConflict(option.dataset.value, episodeNumberInput.value)
+          : undefined;
+        if (conflict) {
+          episodeNumberError.textContent = formatLocalEpisodeConflict(conflict);
+          return;
+        }
         collectionSelect.value = option.dataset.value;
         collectionPickerLabel.textContent = option.textContent;
         collectionPickerTrigger.classList.toggle('is-scope-option', option.classList.contains('is-scope-option'));
@@ -409,6 +562,7 @@ function createFormHtml(
           candidate.setAttribute('aria-selected', String(candidate === option));
         });
         collectionSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        updateEpisodeNumberField();
         closeCollectionPicker(true);
       });
       option.addEventListener('keydown', (event) => {
@@ -436,6 +590,10 @@ function createFormHtml(
     document.addEventListener('pointerdown', (event) => {
       if (!collectionPicker.contains(event.target)) closeCollectionPicker();
     });
+    if (supportsEpisodeNumber) {
+      episodeNumberInput.addEventListener('input', updateEpisodeNumberField);
+      updateEpisodeNumberField();
+    }
 
     let imageAttachments = imageAttachmentArea
       ? JSON.parse(imageAttachmentArea.dataset.initialImages)
@@ -587,6 +745,10 @@ function createFormHtml(
     });
 
     function sendFormValues(runPrompt) {
+      updateEpisodeNumberField();
+      if (!form.reportValidity()) {
+        return;
+      }
       const formData = new FormData(form);
       const values = Object.fromEntries(
         [...formData.entries()].filter(([name]) => name !== 'collectionId' && !name.endsWith('__custom'))
@@ -604,7 +766,12 @@ function createFormHtml(
       saveButton.disabled = true;
       submitButton.disabled = true;
       status.textContent = '';
-      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values, collectionId });
+      vscode.postMessage({
+        command: runPrompt ? 'submit' : 'save',
+        values,
+        collectionId,
+        episodeNumber: supportsEpisodeNumber ? episodeNumberInput.value : undefined
+      });
     }
 
     document.querySelectorAll('[data-custom-input]').forEach((select) => {
@@ -649,6 +816,9 @@ function createFormHtml(
         saveButton.disabled = false;
         submitButton.disabled = false;
         status.textContent = event.data.text;
+        if (supportsEpisodeNumber && collectionSelect.value !== '0') {
+          updateEpisodeNumberField();
+        }
       }
     });
   </script>
@@ -683,6 +853,37 @@ function renderWorkCollectionField(collections: readonly WorkCollection[], selec
       <div class="collection-picker-menu" id="collection-picker-menu" role="listbox" aria-labelledby="collectionId-label" hidden>${pickerOptions}</div>
     </div>
   </div>`;
+}
+
+/** 生成仅在任务绑定合集时显示的必填集数字段。 */
+function renderEpisodeNumberField(
+  supportsEpisodeNumber: boolean,
+  selectedCollectionId: string,
+  initialEpisodeNumber: number | undefined
+): string {
+  if (!supportsEpisodeNumber) {
+    return '';
+  }
+  const isRequired = selectedCollectionId !== '0';
+  const value = initialEpisodeNumber === undefined ? '' : String(initialEpisodeNumber);
+  return `<div class="field" id="episode-number-field"${isRequired ? '' : ' hidden'}>
+    <div class="field-heading"><label for="episode-number">当前集数</label></div>
+    <input id="episode-number" type="number" min="1" step="1" inputmode="numeric" placeholder="输入正整数" value="${escapeHtml(value)}"${isRequired ? ' required' : ' disabled'} aria-describedby="episode-number-error">
+    <p class="episode-number-error" id="episode-number-error" role="status" aria-live="polite"></p>
+  </div>`;
+}
+
+/** 生成包含合集、集数和占用任务信息的冲突说明。 */
+function formatEpisodeNumberConflict(conflict: EpisodeNumberRecord): string {
+  return `合集“${conflict.collectionName}”的第 ${conflict.episodeNumber} 集已被任务“${conflict.title ?? '未命名任务'}”（${conflict.categoryName}）占用。请更改集数或选择其他合集。`;
+}
+
+/** 转义内嵌脚本数据，避免用户文本结束脚本标签。 */
+function serializeForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function renderField(field: FormField, initialValue: string): string {
