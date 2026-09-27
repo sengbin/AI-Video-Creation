@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Episode } from './database';
 import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
@@ -19,6 +20,8 @@ export interface FormImageAttachment {
 export interface FormSubmission {
   readonly values: FormValues;
   readonly runPrompt: boolean;
+  /** 表单所选剧集；'0' 表示不归属剧集。 */
+  readonly episodeId: string;
 }
 
 /**
@@ -86,7 +89,8 @@ export function parseImageAttachments(value: string | undefined): FormImageAttac
 export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
-  initialValues: FormValues = {}
+  initialValues: FormValues = {},
+  episodes: readonly Episode[] = []
 ): Promise<FormSubmission | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
@@ -102,7 +106,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(workflow, initialValues);
+  panel.webview.html = createFormHtml(workflow, initialValues, episodes);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -136,7 +140,9 @@ export function collectFormValues(
       }
 
       const values = readFormValues(message.values, workflow);
-      if (!values) {
+        const episodeId = message.episodeId;
+        if (!values || typeof episodeId !== 'string' ||
+          (episodeId !== '0' && !episodes.some((episode) => episode.id === episodeId))) {
         void panel.webview.postMessage({
           command: 'validation-error',
           text: '表单数据无效，请检查后重新提交。'
@@ -153,7 +159,7 @@ export function collectFormValues(
         return;
       }
 
-      finish({ values, runPrompt: message.command === 'submit' });
+      finish({ values, runPrompt: message.command === 'submit', episodeId });
     }));
   });
 }
@@ -197,7 +203,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** 生成带有工作流字段和操作按钮的表单页面。 */
 function createFormHtml(
   workflow: FormWorkflow,
-  initialValues: FormValues
+  initialValues: FormValues,
+  episodes: readonly Episode[]
 ): string {
   const nonce = createNonce();
   const imageAttachments = workflow.supportsImageAttachments
@@ -214,6 +221,7 @@ function createFormHtml(
   const fields = workflow.fields.map((field) =>
     renderField(field, initialValues[field.name] ?? '')
   ).join('');
+  const episodeField = renderEpisodeField(episodes, initialValues.episodeId ?? '0');
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -304,6 +312,7 @@ function createFormHtml(
     <h1>${escapeHtml(workflow.title)}</h1>
     <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
+      ${episodeField}
       ${imageAttachmentField}
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
@@ -474,8 +483,9 @@ function createFormHtml(
     function sendFormValues(runPrompt) {
       const formData = new FormData(form);
       const values = Object.fromEntries(
-        [...formData.entries()].filter(([name]) => !name.endsWith('__custom'))
+        [...formData.entries()].filter(([name]) => name !== 'episodeId' && !name.endsWith('__custom'))
       );
+      const episodeId = formData.get('episodeId');
       document.querySelectorAll('[data-custom-input]').forEach((select) => {
         if (select.value === '${CUSTOM_OPTION_VALUE}') {
           const customInput = document.getElementById(select.dataset.customInput);
@@ -488,7 +498,7 @@ function createFormHtml(
       saveButton.disabled = true;
       submitButton.disabled = true;
       status.textContent = '';
-      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values });
+      vscode.postMessage({ command: runPrompt ? 'submit' : 'save', values, episodeId });
     }
 
     document.querySelectorAll('[data-custom-input]').forEach((select) => {
@@ -538,6 +548,20 @@ function createFormHtml(
   </script>
 </body>
 </html>`;
+}
+
+/** 生成固定在任务参数表单顶部的剧集归属选择项。 */
+function renderEpisodeField(episodes: readonly Episode[], selectedEpisodeId: string): string {
+  const options = episodes.map((episode) =>
+    `<option value="${escapeHtml(episode.id)}"${episode.id === selectedEpisodeId ? ' selected' : ''}>${escapeHtml(episode.name)}</option>`
+  ).join('');
+  return `<div class="field">
+    <div class="field-heading"><label for="episodeId">所属剧集</label></div>
+    <select id="episodeId" name="episodeId">
+      <option value="0"${selectedEpisodeId === '0' ? ' selected' : ''}>不归属剧集</option>
+      ${options}
+    </select>
+  </div>`;
 }
 
 function renderField(field: FormField, initialValue: string): string {

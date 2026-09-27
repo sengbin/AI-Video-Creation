@@ -57,6 +57,7 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(savedResult?.generatedResultEnglish, 'English prompt body');
       const updatedRecord = database.updateRecord(record.id, {
         title: '修改后的记录',
+        episodeId: record.episodeId,
         schema: record.schema,
         data: { title: '修改后的记录', genre: '奇幻' }
       });
@@ -68,6 +69,42 @@ suite('AI视频创作助手扩展', () => {
       assert.deepStrictEqual(updatedRecord.data, { title: '修改后的记录', genre: '奇幻' });
       assert.strictEqual(database.deleteRecord(record.id), true);
       assert.strictEqual(database.getRecord(record.id), undefined);
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('剧集可筛选记录并在删除时级联清理绑定数据', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-episodes-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    try {
+      const episode = database.createEpisode({ name: '第一集', description: '开端' });
+      const boundRecord = database.saveRecord({
+        title: '剧集记录',
+        categoryId: 'story',
+        categoryName: '故事',
+        episodeId: episode.id,
+        schema: [],
+        data: { title: '剧集记录' }
+      });
+      const unassignedRecord = database.saveRecord({
+        title: '独立记录',
+        categoryId: 'story',
+        categoryName: '故事',
+        episodeId: '0',
+        schema: [],
+        data: { title: '独立记录' }
+      });
+
+      assert.strictEqual(boundRecord.episodeId, episode.id);
+      assert.deepStrictEqual(database.listRecords(undefined, episode.id), [boundRecord]);
+      assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
+      assert.throws(() => database.createEpisode({ name: '第一集', description: '' }), /名称已存在/);
+      assert.strictEqual(database.deleteEpisode(episode.id), true);
+      assert.strictEqual(database.getRecord(boundRecord.id), undefined);
+      assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
+      assert.deepStrictEqual(database.listEpisodes(), []);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -109,6 +146,7 @@ suite('AI视频创作助手扩展', () => {
 
       const updatedRecord = database.updateRecord(record.id, {
         title: '编辑后的图片故事记录',
+        episodeId: record.episodeId,
         schema: workflow.fields,
         data: { ...restoredValues, title: '编辑后的图片故事记录' }
       });
@@ -150,6 +188,7 @@ suite('AI视频创作助手扩展', () => {
       const [record] = database.listRecords('legacy-category');
       assert.strictEqual(record.id, 'legacy-id');
       assert.strictEqual(record.title, undefined);
+      assert.strictEqual(record.episodeId, '0');
       assert.strictEqual(record.updatedAt, record.createdAt);
       assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
       assert.strictEqual(record.generatedResultEnglish, undefined);
