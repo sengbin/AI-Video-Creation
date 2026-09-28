@@ -766,13 +766,6 @@ function renderWorkProjectField(projects: readonly WorkProject[], selectedWorkPr
 }
 
 /** 转义内嵌脚本数据，避免用户文本结束脚本标签。 */
-function serializeForScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-}
-
 function renderField(
   field: FormField,
   initialValue: string,

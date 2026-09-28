@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, unlinkSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 import { GeneratedChapterContent, MAX_GENERATED_CHAPTERS } from './chapterContent';
-
-const DATABASE_SCHEMA_VERSION = 4;
+import { UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './taskNamePolicy';
+export { UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './taskNamePolicy';
 
 /** 新增一条提示词记录及其项目归属。 */
 export interface NewPromptRecord {
@@ -58,7 +57,7 @@ export interface WorkProject {
   readonly updatedAt: string;
 }
 
-/** 可作为剧本创作素材来源的已生成内容任务。 */
+/** 可关联的已生成内容任务。 */
 export interface GeneratedContentTask {
   readonly id: string;
   readonly taskName: string;
@@ -104,9 +103,6 @@ export class PromptDatabase implements vscode.Disposable {
     await vscode.workspace.fs.createDirectory(storageUri);
 
     const databasePath = vscode.Uri.joinPath(storageUri, 'creative-projects.sqlite').fsPath;
-    const legacyDatabasePath = vscode.Uri.joinPath(storageUri, 'prompt-records.sqlite').fsPath;
-    resetDatabaseIfOutdated(databasePath);
-    deleteDatabaseFiles(legacyDatabasePath);
     const connection = new DatabaseSync(databasePath);
 
     try {
@@ -144,7 +140,6 @@ export class PromptDatabase implements vscode.Disposable {
           PRIMARY KEY (record_id, chapter_number)
         );
       `);
-      connection.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
     } catch (error) {
       connection.close();
       throw error;
@@ -162,6 +157,7 @@ export class PromptDatabase implements vscode.Disposable {
     this.assertWorkProjectExists(projectId);
     const record = {
       ...input,
+      taskName: input.taskName.trim(),
       projectId,
       id: randomUUID(),
       createdAt: new Date().toISOString()
@@ -169,21 +165,23 @@ export class PromptDatabase implements vscode.Disposable {
     const schemaJson = serializeJson(record.schema, 'schema');
     const dataJson = serializeJson(record.data, 'data');
 
-    this.connection.prepare(`
-      INSERT INTO prompt_records (
-        id, task_name, category_id, category_name, project_id, schema_json, data_json, created_at, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id,
-      record.taskName,
-      record.categoryId,
-      record.categoryName,
-      record.projectId,
-      schemaJson,
-      dataJson,
-      record.createdAt,
-      null
-    );
+    this.writeUniqueTaskName(record.categoryId, record.taskName, undefined, () => {
+      this.connection.prepare(`
+        INSERT INTO prompt_records (
+          id, task_name, category_id, category_name, project_id, schema_json, data_json, created_at, generated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id,
+        record.taskName,
+        record.categoryId,
+        record.categoryName,
+        record.projectId,
+        schemaJson,
+        dataJson,
+        record.createdAt,
+        null
+      );
+    });
 
     this.recordsChangedEmitter.fire();
     return {
@@ -272,11 +270,17 @@ export class PromptDatabase implements vscode.Disposable {
     this.assertWorkProjectExists(input.projectId);
     const schemaJson = serializeJson(input.schema, 'schema');
     const dataJson = serializeJson(input.data, 'data');
-    const result = this.connection.prepare(`
+    const taskName = input.taskName.trim();
+    const record = this.connection.prepare('SELECT category_id FROM prompt_records WHERE id = ?').get(id) as
+      { category_id: string } | undefined;
+    if (!record) {
+      return undefined;
+    }
+    const result = this.writeUniqueTaskName(record.category_id, taskName, id, () => this.connection.prepare(`
       UPDATE prompt_records
       SET task_name = ?, project_id = ?, schema_json = ?, data_json = ?
       WHERE id = ?
-    `).run(input.taskName, input.projectId, schemaJson, dataJson, id);
+    `).run(taskName, input.projectId, schemaJson, dataJson, id));
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -300,7 +304,7 @@ export class PromptDatabase implements vscode.Disposable {
       `category_id IN (${categoryIds.map(() => '?').join(', ')})`,
       'LOWER(TRIM(task_name)) = LOWER(TRIM(?))'
     ];
-    const parameters = [...categoryIds, taskName];
+    const parameters = [...categoryIds, taskName.trim()];
     if (excludeRecordId !== undefined) {
       conditions.push('id <> ?');
       parameters.push(excludeRecordId);
@@ -311,47 +315,6 @@ export class PromptDatabase implements vscode.Disposable {
     if (existing) {
       throw new Error('任务名称已存在，请使用其他名称。');
     }
-  }
-
-  /** 删除指定工作流中仍保存旧字段签名的冲突记录。 */
-  deleteRecordsWithConflictingFields(categoryIds: readonly string[], fieldNames: readonly string[]): number {
-    if (categoryIds.length === 0 || fieldNames.length === 0) {
-      return 0;
-    }
-
-    const placeholders = categoryIds.map(() => '?').join(', ');
-    const rows = this.connection.prepare(`
-      SELECT id, schema_json, data_json FROM prompt_records
-      WHERE category_id IN (${placeholders})
-    `).all(...categoryIds) as { id: string; schema_json: string; data_json: string }[];
-    const legacyNames = new Set(fieldNames);
-    const conflictingIds = rows.filter((row) => {
-      const data = JSON.parse(row.data_json) as unknown;
-      const schema = JSON.parse(row.schema_json) as unknown;
-      const hasDataField = typeof data === 'object' && data !== null && !Array.isArray(data) &&
-        Object.keys(data).some((name) => legacyNames.has(name));
-      const hasSchemaField = Array.isArray(schema) && schema.some((field) =>
-        typeof field === 'object' && field !== null && !Array.isArray(field) &&
-        'name' in field && typeof field.name === 'string' && legacyNames.has(field.name)
-      );
-      return hasDataField || hasSchemaField;
-    }).map((row) => row.id);
-
-    if (conflictingIds.length === 0) {
-      return 0;
-    }
-
-    const deleteStatement = this.connection.prepare('DELETE FROM prompt_records WHERE id = ?');
-    this.connection.exec('BEGIN');
-    try {
-      conflictingIds.forEach((id) => deleteStatement.run(id));
-      this.connection.exec('COMMIT');
-    } catch (error) {
-      this.connection.exec('ROLLBACK');
-      throw error;
-    }
-    this.recordsChangedEmitter.fire();
-    return conflictingIds.length;
   }
 
   /**
@@ -463,42 +426,6 @@ export class PromptDatabase implements vscode.Disposable {
       title: row.title,
       content: row.content
     }));
-  }
-
-  /** 以单个事务替换指定任务的全部章节内容。 */
-  saveGeneratedChapterContents(id: string, chapters: readonly GeneratedChapterContent[]): boolean {
-    if (chapters.length < 1 || chapters.length > MAX_GENERATED_CHAPTERS) {
-      throw new Error(`章节数量必须在 1 到 ${MAX_GENERATED_CHAPTERS} 章之间。`);
-    }
-    chapters.forEach((chapter, index) => {
-      if (chapter.chapterNumber !== index + 1 || !chapter.title.trim() || !chapter.content.trim()) {
-        throw new Error('每章必须按顺序提供连续章节号、标题和正文。');
-      }
-    });
-    if (!this.connection.prepare('SELECT 1 FROM prompt_records WHERE id = ?').get(id)) {
-      return false;
-    }
-
-    const generatedAt = new Date().toISOString();
-    const insertChapter = this.connection.prepare(`
-      INSERT INTO generated_chapter_contents (record_id, chapter_number, title, content, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    this.connection.exec('BEGIN');
-    try {
-      this.connection.prepare('DELETE FROM generated_chapter_contents WHERE record_id = ?').run(id);
-      for (const chapter of chapters) {
-        insertChapter.run(id, chapter.chapterNumber, chapter.title.trim(), chapter.content.trim(), generatedAt);
-      }
-      this.connection.prepare('UPDATE prompt_records SET generated_at = ? WHERE id = ?').run(generatedAt, id);
-      this.connection.exec('COMMIT');
-    } catch (error) {
-      this.connection.exec('ROLLBACK');
-      throw error;
-    }
-
-    this.recordsChangedEmitter.fire();
-    return true;
   }
 
   /**
@@ -644,6 +571,23 @@ export class PromptDatabase implements vscode.Disposable {
     }
   }
 
+  private writeUniqueTaskName<T>(categoryId: string, taskName: string, excludeRecordId: string | undefined, write: () => T): T {
+    if (!UNIQUE_CONTENT_TASK_WORKFLOW_NAMES.some((workflowName) => workflowName === categoryId)) {
+      return write();
+    }
+
+    this.connection.exec('BEGIN IMMEDIATE');
+    try {
+      this.assertTaskNameUnique(taskName, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES, excludeRecordId);
+      const result = write();
+      this.connection.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.connection.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   /**
    * 关闭数据库连接。
    */
@@ -677,33 +621,6 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
     createdAt: row.created_at,
     generatedAt: row.generated_at ?? undefined
   };
-}
-
-function resetDatabaseIfOutdated(databasePath: string): void {
-  if (!existsSync(databasePath)) {
-    return;
-  }
-
-  const connection = new DatabaseSync(databasePath);
-  let schemaVersion: number;
-  try {
-    const result = connection.prepare('PRAGMA user_version').get() as { user_version: number };
-    schemaVersion = result.user_version;
-  } finally {
-    connection.close();
-  }
-
-  if (schemaVersion !== DATABASE_SCHEMA_VERSION) {
-    deleteDatabaseFiles(databasePath);
-  }
-}
-
-function deleteDatabaseFiles(databasePath: string): void {
-  for (const filePath of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
-    if (existsSync(filePath)) {
-      unlinkSync(filePath);
-    }
-  }
 }
 
 /** 判断数据库异常是否由项目名称唯一约束触发。 */

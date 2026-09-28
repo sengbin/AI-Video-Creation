@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PromptDatabase } from './database';
+import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './database';
 import {
   countChapterWords,
   GeneratedChapterContent,
@@ -16,8 +16,7 @@ import {
   isChapterContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
-  SHOOTING_SCRIPT_WORKFLOW_NAME,
-  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES
+  SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
 
 type EmptyToolInput = Record<string, never>;
@@ -165,15 +164,15 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
       const sourceTask = listGeneratedContentTasks(this.database)
         .find((task) => task.id === values.sourceTaskId && task.projectId === submission.projectId);
       if (!sourceTask) {
-        throw new Error('关联创作任务不存在、未生成内容或不属于所选项目。');
+        throw new Error('关联内容创作任务不存在、未生成内容或不属于所选项目。');
       }
       const sourceRecord = this.database.getRecord(sourceTask.id);
       if (!sourceRecord) {
-        throw new Error('关联创作任务已不存在。');
+        throw new Error('关联内容创作任务已不存在。');
       }
       const chapters = this.database.listGeneratedChapterContents(sourceTask.id);
       if (chapters.length === 0) {
-        throw new Error('关联创作任务没有可用的章节内容。');
+        throw new Error('关联内容创作任务没有可用的章节内容。');
       }
       parameters.sourceMaterial = JSON.stringify(chapters.map(({ chapterNumber, title, content }) => ({
         chapterNumber,

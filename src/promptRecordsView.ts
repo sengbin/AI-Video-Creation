@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { GeneratedContentTask, WorkProject, PromptDatabase, PromptRecord } from './database';
+import { GeneratedContentTask, PromptDatabase, PromptRecord, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './database';
 import {
   renderAddRecordFields,
   validateWorkflowFormValues
@@ -12,8 +12,7 @@ import {
   getWorkflowResultType,
   TASK_NAME_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
-  SHOOTING_SCRIPT_WORKFLOW_NAME,
-  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES
+  SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
 import { WorkflowSubmissionStore } from './workflowFormTool';
 

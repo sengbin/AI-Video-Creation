@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
-import { PromptDatabase } from '../../database';
+import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from '../../database';
 import {
   parseImageAttachments,
   renderAddRecordFields,
@@ -16,7 +16,6 @@ import {
   CREATIVE_WRITING_WORKFLOW_NAME,
   IMAGE_ATTACHMENTS_FIELD,
   IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
-  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from '../../formWorkflows';
@@ -124,18 +123,38 @@ suite('AI视频创作助手扩展', () => {
       assert.doesNotThrow(() => database.assertTaskNameUnique('同名任务', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES, existingTask.id));
       assert.doesNotThrow(() => database.assertTaskNameUnique('其他任务', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES));
 
-      database.saveRecord({
-        taskName: '跨项目重名',
+      assert.throws(() => database.saveRecord({
+        taskName: ' 同名任务 ',
+        categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+        categoryName: '图片灵感写作',
+        projectId: otherProject.id,
+        schema: [],
+        data: {}
+      }), /任务名称已存在/);
+
+      const imageTask = database.saveRecord({
+        taskName: '图片任务',
         categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
         categoryName: '图片灵感写作',
         projectId: otherProject.id,
         schema: [],
         data: {}
       });
-      assert.throws(
-        () => database.assertTaskNameUnique('跨项目重名', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES),
-        /任务名称已存在/
-      );
+      assert.throws(() => database.updateRecord(imageTask.id, {
+        taskName: '同名任务',
+        projectId: otherProject.id,
+        schema: [],
+        data: {}
+      }), /任务名称已存在/);
+
+      assert.doesNotThrow(() => database.saveRecord({
+        taskName: '同名任务',
+        categoryId: 'other-workflow',
+        categoryName: '其他工作流',
+        projectId: otherProject.id,
+        schema: [],
+        data: {}
+      }));
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -325,7 +344,6 @@ suite('AI视频创作助手扩展', () => {
       });
 
       assert.ok(fs.existsSync(path.join(storagePath, 'creative-projects.sqlite')));
-      assert.ok(!fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
       assert.deepStrictEqual(database.getRecord(record.id), record);
       assert.strictEqual(record.generatedAt, undefined);
       assert.deepStrictEqual(
@@ -358,49 +376,6 @@ suite('AI视频创作助手扩展', () => {
       assert.deepStrictEqual(updatedRecord.data, { taskName: '修改后的记录', genre: '奇幻' });
       assert.strictEqual(database.deleteRecord(record.id), true);
       assert.strictEqual(database.getRecord(record.id), undefined);
-    } finally {
-      database.dispose();
-      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
-
-  test('清理旧篇幅参数冲突记录但保留其他记录', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-chapter-cleanup-'));
-    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
-    const legacyRecord = database.saveRecord({
-      taskName: '旧写作记录',
-      categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
-      categoryName: '创意写作',
-      schema: [{ name: 'episodeDurationSeconds' }, { name: 'maxEpisodes' }],
-      data: { taskName: '旧写作记录', episodeDurationSeconds: '30', maxEpisodes: '10' }
-    });
-    const unrelatedRecord = database.saveRecord({
-      taskName: '其他记录',
-      categoryId: 'other-workflow',
-      categoryName: '其他',
-      schema: [{ name: 'maxEpisodes' }],
-      data: { taskName: '其他记录', maxEpisodes: '10' }
-    });
-
-    try {
-      const deletedCount = database.deleteRecordsWithConflictingFields(
-        [CREATIVE_WRITING_WORKFLOW_NAME, IMAGE_INSPIRED_WRITING_WORKFLOW_NAME, 'ai-video-creation-tools_collect_novel_parameters'],
-        ['episodeDurationSeconds', 'maxEpisodes']
-      );
-      assert.strictEqual(deletedCount, 1);
-      assert.strictEqual(database.getRecord(legacyRecord.id), undefined);
-      assert.ok(database.getRecord(unrelatedRecord.id));
-      const connection = new DatabaseSync(path.join(temporaryDirectory, 'globalStorage', 'creative-projects.sqlite'));
-      try {
-        const chapterColumns = connection.prepare('PRAGMA table_info(generated_chapter_contents)').all() as { name: string }[];
-        const legacyTable = connection.prepare(`
-          SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'generated_episode_contents'
-        `).get();
-        assert.ok(chapterColumns.some((column) => column.name === 'chapter_number'));
-        assert.strictEqual(legacyTable, undefined);
-      } finally {
-        connection.close();
-      }
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -533,223 +508,6 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('旧记录数据库不迁移并直接删除', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-db-migration-'));
-    const storagePath = path.join(temporaryDirectory, 'globalStorage');
-    fs.mkdirSync(storagePath);
-    const legacyConnection = new DatabaseSync(path.join(storagePath, 'prompt-records.sqlite'));
-    legacyConnection.exec(`
-      CREATE TABLE prompt_records (
-        id TEXT PRIMARY KEY NOT NULL,
-        category_id TEXT NOT NULL,
-        category_name TEXT NOT NULL,
-        schema_json TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        generated_result TEXT,
-        created_at TEXT NOT NULL
-      );
-      INSERT INTO prompt_records VALUES (
-        'legacy-id', 'legacy-category', '旧分类', '[]', '{}', '旧版中英合并提示词',
-        '2026-01-01T00:00:00.000Z'
-      );
-    `);
-    legacyConnection.close();
-    const existingConnection = new DatabaseSync(path.join(storagePath, 'creative-projects.sqlite'));
-    existingConnection.exec(`
-      CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-      INSERT INTO projects VALUES ('old-project', '旧项目');
-      CREATE TABLE prompt_records (id TEXT PRIMARY KEY, title TEXT);
-      INSERT INTO prompt_records VALUES ('old-record', '旧任务');
-      PRAGMA user_version = 3;
-    `);
-    existingConnection.close();
-
-    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
-    try {
-      assert.deepStrictEqual(database.listRecords(), []);
-      assert.deepStrictEqual(database.listWorkProjects(), []);
-      assert.strictEqual(database.getRecord('old-record'), undefined);
-      assert.ok(!fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
-      const freshConnection = new DatabaseSync(path.join(storagePath, 'creative-projects.sqlite'));
-      try {
-        const columns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        assert.ok(columns.some((column) => column.name === 'task_name'));
-        assert.ok(!columns.some((column) => column.name === 'title'));
-        assert.strictEqual((freshConnection.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 4);
-      } finally {
-        freshConnection.close();
-      }
-    } finally {
-      database.dispose();
-      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
-
-  test('旧工作流标识不再兼容改写', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-writing-category-migration-'));
-    const storageUri = vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage'));
-    let database = await PromptDatabase.open(storageUri);
-
-    try {
-      const creativeRecord = database.saveRecord({
-        taskName: '创意作品',
-        categoryId: 'ai-video-creation-tools_collect_story_parameters',
-        categoryName: '创意写故事',
-        schema: [],
-        data: { taskName: '创意作品' }
-      });
-      const imageRecord = database.saveRecord({
-        taskName: '图片灵感作品',
-        categoryId: 'ai-video-creation-tools_collect_image_story_parameters',
-        categoryName: '图片写故事',
-        schema: [],
-        data: { taskName: '图片灵感作品' }
-      });
-
-      database.dispose();
-      database = await PromptDatabase.open(storageUri);
-
-      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_story_parameters'), [creativeRecord]);
-      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_image_story_parameters'), [imageRecord]);
-      assert.deepStrictEqual(database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME), []);
-      assert.deepStrictEqual(database.listRecords(IMAGE_INSPIRED_WRITING_WORKFLOW_NAME), []);
-    } finally {
-      database.dispose();
-      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
-
-  test('旧版项目数据库不迁移并清空旧项目数据', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-project-migration-'));
-    const storagePath = path.join(temporaryDirectory, 'globalStorage');
-    fs.mkdirSync(storagePath);
-    const databasePath = path.join(storagePath, 'prompt-records.sqlite');
-    const legacyConnection = new DatabaseSync(databasePath);
-    legacyConnection.exec(`
-      CREATE TABLE episodes (
-        id TEXT PRIMARY KEY NOT NULL,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      INSERT INTO episodes VALUES (
-        'legacy-project-id', '旧作品项目', '已保存的项目简介',
-        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
-      );
-      CREATE TABLE prompt_records (
-        id TEXT PRIMARY KEY NOT NULL,
-        title TEXT,
-        category_id TEXT NOT NULL,
-        category_name TEXT NOT NULL,
-        episode_id TEXT NOT NULL,
-        schema_json TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        generated_result_chinese TEXT,
-        generated_result_english TEXT,
-        generated_result_content TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      );
-      INSERT INTO prompt_records VALUES (
-        'legacy-record-id', '旧故事章节', 'story', '故事创作', 'legacy-project-id',
-        '[]', '{"title":"旧故事章节"}', NULL, NULL, '保留的正文',
-        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
-      );
-    `);
-    legacyConnection.close();
-
-    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
-    try {
-      assert.deepStrictEqual(database.listWorkProjects(), []);
-      assert.strictEqual(database.getRecord('legacy-record-id'), undefined);
-      assert.ok(!fs.existsSync(databasePath));
-      const freshDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
-      const freshConnection = new DatabaseSync(freshDatabasePath);
-      try {
-        const promptColumns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        assert.ok(promptColumns.some((column) => column.name === 'task_name'));
-        assert.ok(!promptColumns.some((column) => column.name === 'title'));
-      } finally {
-        freshConnection.close();
-      }
-    } finally {
-      database.dispose();
-      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
-
-  test('旧合集数据库不迁移并删除旧记录', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collection-migration-'));
-    const storagePath = path.join(temporaryDirectory, 'globalStorage');
-    fs.mkdirSync(storagePath);
-    const legacyDatabasePath = path.join(storagePath, 'prompt-records.sqlite');
-    const legacyConnection = new DatabaseSync(legacyDatabasePath);
-    legacyConnection.exec(`
-      CREATE TABLE collections (
-        id TEXT PRIMARY KEY NOT NULL,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      INSERT INTO collections VALUES (
-        'collection-id', '旧合集名称', '原项目简介',
-        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
-      );
-      CREATE TABLE prompt_records (
-        id TEXT PRIMARY KEY NOT NULL,
-        title TEXT,
-        category_id TEXT NOT NULL,
-        category_name TEXT NOT NULL,
-        collection_id TEXT NOT NULL,
-        episode_number INTEGER,
-        schema_json TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        generated_result_chinese TEXT,
-        generated_result_english TEXT,
-        generated_result_content TEXT,
-        created_at TEXT NOT NULL,
-        generated_at TEXT
-      );
-      CREATE UNIQUE INDEX prompt_records_collection_task_episode_unique_idx
-        ON prompt_records (collection_id, category_id, episode_number)
-        WHERE collection_id <> '0' AND episode_number IS NOT NULL;
-      INSERT INTO prompt_records VALUES (
-        'collection-record-id', '旧任务', 'story', '创意写作', 'collection-id', 3,
-        '[]', '{"title":"旧任务"}', NULL, NULL, NULL,
-        '2026-01-03T00:00:00.000Z', NULL
-      );
-    `);
-    legacyConnection.close();
-
-    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
-    try {
-      assert.deepStrictEqual(database.listWorkProjects(), []);
-      assert.strictEqual(database.getRecord('collection-record-id'), undefined);
-
-      const freshDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
-      assert.ok(fs.existsSync(freshDatabasePath));
-      assert.ok(!fs.existsSync(legacyDatabasePath));
-      const freshConnection = new DatabaseSync(freshDatabasePath);
-      try {
-        const taskColumns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        const projectTables = freshConnection.prepare(`
-          SELECT name FROM sqlite_master WHERE type = 'table'
-        `).all() as { name: string }[];
-        assert.ok(taskColumns.some((column) => column.name === 'task_name'));
-        assert.ok(!taskColumns.some((column) => column.name === 'title'));
-        assert.ok(projectTables.some((table) => table.name === 'projects'));
-        assert.ok(!projectTables.some((table) => table.name === 'collections'));
-      } finally {
-        freshConnection.close();
-      }
-    } finally {
-      database.dispose();
-      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-    }
-  });
-
   test('能够将记录页提交的参数一次性交给工作流工具', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-submission-'));
     let database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
@@ -788,10 +546,10 @@ suite('AI视频创作助手扩展', () => {
       schema: [],
       data: { taskName: '分集创意' }
     });
-    database.saveGeneratedChapterContents(sourceRecord.id, [
+    database.replaceGeneratedOutput(sourceRecord.id, { type: 'chapters', chapters: [
       { chapterNumber: 1, title: '第一集', content: '第一集完整正文' },
       { chapterNumber: 2, title: '第二集', content: '第二集完整正文' }
-    ]);
+    ] });
     database.updateGeneratedContent(sourceRecord.id, '不应混入的整段正文');
     const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
     assert.ok(workflow);
@@ -878,10 +636,10 @@ suite('AI视频创作助手扩展', () => {
     const cancellationSource = new vscode.CancellationTokenSource();
 
     try {
-      database.updateGeneratedContent(record.id, '上次生成的单篇正文');
-      database.saveGeneratedChapterContents(record.id, [
+      database.replaceGeneratedOutput(record.id, { type: 'chapters', chapters: [
         { chapterNumber: 1, title: '旧章节', content: '上次生成的章节正文' }
-      ]);
+      ] });
+      database.updateGeneratedContent(record.id, '上次生成的单篇正文');
       await tool.invoke({
         input: {
           recordId: record.id,
@@ -926,11 +684,11 @@ suite('AI视频创作助手扩展', () => {
     const cancellationSource = new vscode.CancellationTokenSource();
 
     try {
+      database.replaceGeneratedOutput(record.id, { type: 'chapters', chapters: [
+        { chapterNumber: 1, title: '旧章节', content: '上次生成的章节正文' }
+      ] });
       database.updateGeneratedContent(record.id, '上次生成的单篇正文');
       database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
-      database.saveGeneratedChapterContents(record.id, [
-        { chapterNumber: 1, title: '旧章节', content: '上次生成的章节正文' }
-      ]);
       await assert.rejects(
         tool.invoke({
           input: {
@@ -1023,10 +781,10 @@ suite('AI视频创作助手扩展', () => {
           schema: [],
           data: { taskName: workflow.title }
         });
-        database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
-        database.saveGeneratedChapterContents(record.id, [
+        database.replaceGeneratedOutput(record.id, { type: 'chapters', chapters: [
           { chapterNumber: 1, title: '旧章节', content: '上次生成的章节正文' }
-        ]);
+        ] });
+        database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
         const generatedContent = `${workflow.title}的完整作品内容`;
         await tool.invoke({
           input: { recordId: record.id, content: generatedContent },

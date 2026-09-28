@@ -1,4 +1,14 @@
 import { MAX_GENERATED_CHAPTERS, MAX_CHAPTER_WORDS, MIN_CHAPTER_WORDS } from './chapterContent';
+import {
+  CREATIVE_WRITING_WORKFLOW_NAME,
+  IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  NOVEL_RECREATION_WORKFLOW_NAME
+} from './taskNamePolicy';
+export {
+  CREATIVE_WRITING_WORKFLOW_NAME,
+  IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  NOVEL_RECREATION_WORKFLOW_NAME
+} from './taskNamePolicy';
 
 export interface FormField {
   readonly name: string;
@@ -42,14 +52,6 @@ export type FormValues = Record<string, string>;
 
 /** 表单与工作流工具之间传递图片附件的隐藏字段名。 */
 export const IMAGE_ATTACHMENTS_FIELD = '__imageAttachments';
-export const CREATIVE_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_creative_writing_parameters';
-export const IMAGE_INSPIRED_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_image_inspired_writing_parameters';
-export const NOVEL_RECREATION_WORKFLOW_NAME = 'ai-video-creation-tools_collect_novel_parameters';
-export const UNIQUE_CONTENT_TASK_WORKFLOW_NAMES = [
-  CREATIVE_WRITING_WORKFLOW_NAME,
-  IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
-  NOVEL_RECREATION_WORKFLOW_NAME
-] as const;
 export const SCREENPLAY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_screenplay_parameters';
 export const SHOOTING_SCRIPT_WORKFLOW_NAME = 'ai-video-creation-tools_collect_shooting_script_parameters';
 

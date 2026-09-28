@@ -11,7 +11,7 @@
 
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
-import { formWorkflows, SCREENPLAY_WORKFLOW_NAME } from './formWorkflows';
+import { formWorkflows } from './formWorkflows';
 import { PromptRecordsViewProvider } from './promptRecordsView';
 import {
   GeneratedResultTool,
@@ -28,14 +28,6 @@ export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
-  database.deleteRecordsWithConflictingFields(
-    formWorkflows.filter((workflow) => workflow.supportsChapterContent === true).map((workflow) => workflow.toolName),
-    ['episodeDurationSeconds', 'maxEpisodes']
-  );
-  database.deleteRecordsWithConflictingFields(
-    [SCREENPLAY_WORKFLOW_NAME],
-    ['format', 'sourceMaterial', 'episodeDurationSeconds']
-  );
   const submissions = new WorkflowSubmissionStore();
   const recordsView = new PromptRecordsViewProvider(
     database,

@@ -131,7 +131,7 @@
       {
         "name": "ai-video-creation-tools_collect_image_inspired_writing_parameters",
         "displayName": "收集图片灵感写作参数",
-        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集任务名称、题材、每章字数范围、章节数上限、画面约束和输出形式。图片由用户作为聊天附件提供，不由此工具收集。任务名称及章节字数和数量约束必填。",
+        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集任务名称、PNG 或 JPEG 图片、题材、每章字数范围、章节数上限、画面约束和输出形式。图片通过参数表单上传，运行时随工具结果传给模型。任务名称及章节字数和数量约束必填。",
         "userDescription": "打开图片灵感写作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_image_inspired_writing_parameters",
