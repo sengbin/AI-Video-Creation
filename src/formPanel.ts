@@ -246,13 +246,19 @@ function createFormHtml(
     : '';
   const defaultProjectId = workflow.requiresProject ? projects[0]?.id ?? '' : '0';
   const selectedProjectId = initialValues.projectId ?? defaultProjectId;
+  const renderWorkflowField = (field: FormField): string => {
+    const renderedField = renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId);
+    return field.name === 'taskName' ? renderedField + imageAttachmentField : renderedField;
+  };
   const projectContentTaskField = workflow.fields
     .filter((field) => field.projectContentTask)
-    .map((field) => renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId))
+    .map(renderWorkflowField)
     .join('');
   const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
-    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
+    renderWorkflowField(field)
   ).join('');
+  const trailingImageAttachmentField = workflow.supportsImageAttachments &&
+    !workflow.fields.some((field) => field.name === 'taskName') ? imageAttachmentField : '';
   const projectField = renderWorkProjectField(projects, initialValues.projectId ?? defaultProjectId, workflow.requiresProject === true);
   const runButton = workflow.showRunButton === false
     ? ''
@@ -366,6 +372,9 @@ function createFormHtml(
     .select-with-custom { display: flex; width: 100%; min-width: 0; gap: 8px; }
     .select-with-custom select { flex: 1 1 100%; min-width: 0; }
     .select-with-custom.has-custom select { flex: 0 1 auto; max-width: 55%; }
+    .select-with-custom.custom-input-below { flex-direction: column; align-items: stretch; }
+    .select-with-custom.custom-input-below select { flex: none; width: 100%; max-width: none; }
+    .select-with-custom.custom-input-below .custom-option { width: 100%; box-sizing: border-box; }
     .custom-option {
       flex: 1 1 0; min-width: 0; padding: 9px 10px;
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
@@ -400,8 +409,8 @@ function createFormHtml(
     <form id="parameter-form">
       ${projectField}
       ${projectContentTaskField}
-      ${imageAttachmentField}
       ${fields}
+      ${trailingImageAttachmentField}
       <div id="status" role="status" aria-live="polite"></div>
       <div class="actions">
         <div class="secondary-actions">
@@ -780,10 +789,10 @@ function renderField(
   const control = field.projectContentTask
     ? `<select id="${name}" name="${name}" data-project-content-task${required}>${[
       `<option value=""${initialValue === '' ? ' selected' : ''}>请选择创作任务</option>`,
-      ...generatedContentTasks.map((task) => `<option value="${escapeHtml(task.id)}" data-project-id="${escapeHtml(task.projectId)}"${task.projectId !== selectedProjectId ? ' hidden' : ''}${task.id === initialValue ? ' selected' : ''}>${escapeHtml(task.title)}</option>`)
+      ...generatedContentTasks.map((task) => `<option value="${escapeHtml(task.id)}" data-project-id="${escapeHtml(task.projectId)}"${task.projectId !== selectedProjectId ? ' hidden' : ''}${task.id === initialValue ? ' selected' : ''}>${escapeHtml(task.taskName)}</option>`)
     ].join('')}</select>`
     : field.options
-    ? `<div class="select-with-custom">
+    ? `<div class="select-with-custom${field.customInputBelow ? ' custom-input-below' : ''}">
         <select id="${name}" name="${name}"${required}${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
           <option value=""${initialValue === '' ? ' selected' : ''}>请选择</option>
           ${field.options.map((option) => `<option value="${escapeHtml(option)}"${initialValue === option ? ' selected' : ''}>${escapeHtml(option)}</option>`).join('')}
@@ -845,12 +854,6 @@ export function renderAddRecordFields(
     <div class="field-heading"><label for="add-record-project">所属项目</label></div>
     <select id="add-record-project" name="projectId"${workflow.requiresProject ? ' required' : ''}>${projectOptions}</select>
   </div>`;
-  const projectContentTaskFields = workflow.fields.filter((field) => field.projectContentTask).map((field) =>
-    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
-  ).join('');
-  const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
-    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
-  ).join('');
   const imageField = workflow.supportsImageAttachments
     ? `<section class="add-image-area" aria-label="图片附件">
         <h3>图片附件</h3>
@@ -860,5 +863,17 @@ export function renderAddRecordFields(
         <p id="add-image-status" role="status" aria-live="polite"></p>
       </section>`
     : '';
-  return `${projectField}${projectContentTaskFields}${fields}${imageField}`;
+  function renderAddRecordField(field: FormField): string {
+    const renderedField = renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId);
+    return field.name === 'taskName' ? renderedField + imageField : renderedField;
+  }
+  const projectContentTaskFields = workflow.fields.filter((field) => field.projectContentTask).map((field) =>
+    renderAddRecordField(field)
+  ).join('');
+  const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
+    renderAddRecordField(field)
+  ).join('');
+  const trailingImageField = workflow.supportsImageAttachments &&
+    !workflow.fields.some((field) => field.name === 'taskName') ? imageField : '';
+  return `${projectField}${projectContentTaskFields}${fields}${trailingImageField}`;
 }

@@ -123,7 +123,7 @@
       {
         "name": "ai-video-creation-tools_collect_creative_writing_parameters",
         "displayName": "收集创意写作参数",
-        "modelDescription": "在创意写作 Prompt 中调用。打开同屏表单收集记录标题、创作主题或灵感、题材、每章字数范围、章节数上限、表达风格和输出要求，提交后把用户填写内容返回给模型按章创作多种体裁的文字作品。记录标题及章节字数和数量约束必填。",
+        "modelDescription": "在创意写作 Prompt 中调用。打开同屏表单收集任务名称、创作主题或灵感、题材、每章字数范围、章节数上限和输出要求，提交后把用户填写内容返回给模型按章创作多种体裁的文字作品。任务名称及章节字数和数量约束必填。",
         "userDescription": "打开创意写作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_creative_writing_parameters",
@@ -136,7 +136,7 @@
       {
         "name": "ai-video-creation-tools_collect_image_inspired_writing_parameters",
         "displayName": "收集图片灵感写作参数",
-        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集记录标题、题材或主题、每章字数范围、章节数上限、画面约束和输出形式。图片由用户作为聊天附件提供，不由此工具收集。记录标题及章节字数和数量约束必填。",
+        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集任务名称、题材、每章字数范围、章节数上限、画面约束和输出形式。图片由用户作为聊天附件提供，不由此工具收集。任务名称及章节字数和数量约束必填。",
         "userDescription": "打开图片灵感写作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_image_inspired_writing_parameters",
@@ -149,7 +149,7 @@
       {
         "name": "ai-video-creation-tools_collect_novel_parameters",
         "displayName": "收集小说改编参数",
-        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集记录标题、改编目标、每章字数范围、章节数上限、保留或调整要求和输出要求，提交后结合用户提供的原作按章创作改编内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。记录标题及章节字数和数量约束必填。",
+        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集任务名称、改编目标、每章字数范围、章节数上限、保留或调整要求和输出要求，提交后结合用户提供的原作按章创作改编内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。任务名称及章节字数和数量约束必填。",
         "userDescription": "打开小说改编参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_novel_parameters",
@@ -162,7 +162,7 @@
       {
         "name": "ai-video-creation-tools_collect_character_parameters",
         "displayName": "收集角色生成参数",
-        "modelDescription": "在角色生成 Prompt 中调用。打开同屏表单收集记录标题、角色类型、外观、身体结构、装束、姿态、构图及画面要求，用于生成角色参考图提示词。记录标题必填，其余字段可留空。",
+        "modelDescription": "在角色生成 Prompt 中调用。打开同屏表单收集任务名称、角色类型、外观、身体结构、装束、姿态、构图及画面要求，用于生成角色参考图提示词。任务名称必填，其余字段可留空。",
         "userDescription": "打开角色生成参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_character_parameters",
@@ -175,7 +175,7 @@
       {
         "name": "ai-video-creation-tools_collect_scene_parameters",
         "displayName": "收集场景生成参数",
-        "modelDescription": "在场景生成 Prompt 中调用。打开同屏表单收集记录标题、地点类型、时代地域、空间结构、时间天气、光线氛围及视觉风格，用于生成场景参考图提示词。记录标题必填，其余字段可留空。",
+        "modelDescription": "在场景生成 Prompt 中调用。打开同屏表单收集任务名称、地点类型、时代地域、空间结构、时间天气、光线氛围及视觉风格，用于生成场景参考图提示词。任务名称必填，其余字段可留空。",
         "userDescription": "打开场景生成参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_scene_parameters",
@@ -188,7 +188,7 @@
       {
         "name": "ai-video-creation-tools_collect_prop_parameters",
         "displayName": "收集道具生成参数",
-        "modelDescription": "在道具生成 Prompt 中调用。打开同屏表单收集记录标题、道具名称、时代、尺寸、材质、颜色、结构、能力、状态及视觉风格，用于生成道具参考图提示词。记录标题必填，其余字段可留空。",
+        "modelDescription": "在道具生成 Prompt 中调用。打开同屏表单收集任务名称、道具名称、时代、尺寸、材质、颜色、结构、能力、状态及视觉风格，用于生成道具参考图提示词。任务名称必填，其余字段可留空。",
         "userDescription": "打开道具生成参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_prop_parameters",
@@ -201,7 +201,7 @@
       {
         "name": "ai-video-creation-tools_collect_effect_parameters",
         "displayName": "收集特效生成参数",
-        "modelDescription": "在特效生成 Prompt 中调用。打开同屏表单收集记录标题、特效来源、触发条件、位置范围、视觉形态、运动、持续时间、环境交互及视觉风格，用于生成特效参考图提示词。记录标题必填，其余字段可留空。",
+        "modelDescription": "在特效生成 Prompt 中调用。打开同屏表单收集任务名称、特效来源、触发条件、位置范围、视觉形态、运动、持续时间、环境交互及视觉风格，用于生成特效参考图提示词。任务名称必填，其余字段可留空。",
         "userDescription": "打开特效生成参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_effect_parameters",
@@ -214,7 +214,7 @@
       {
         "name": "ai-video-creation-tools_collect_screenplay_parameters",
         "displayName": "收集剧本创作参数",
-        "modelDescription": "在剧本创作 Prompt 中调用。打开同屏表单收集作品名称、所属项目、关联的已生成内容任务、单集最大时长、最大总集数、题材、表达风格和补充要求；根据关联内容分析合理时长，不为达到上限而扩写，必要时按内容调整时长。作品名称、所属项目、关联任务、单集最大时长和最大总集数必填。",
+        "modelDescription": "在剧本创作 Prompt 中调用。打开同屏表单收集任务名称、所属项目、关联的已生成内容任务、单集最大时长、最大总集数和补充要求；根据关联内容分析合理时长，不为达到上限而扩写，必要时按内容调整时长。任务名称、所属项目、关联任务、单集最大时长和最大总集数必填。",
         "userDescription": "打开剧本创作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_screenplay_parameters",
@@ -227,7 +227,7 @@
       {
         "name": "ai-video-creation-tools_collect_shooting_script_parameters",
         "displayName": "收集拍摄脚本参数",
-        "modelDescription": "在拍摄脚本制作 Prompt 中调用。打开同屏表单收集记录标题、创作内容或剧本依据、目标时长、画幅、镜头节奏、连续性、声音和视频生成模型要求，提交后直接编写完整逐镜头拍摄脚本，并为每个镜头提供图生视频提示词。记录标题必填，其余字段可留空。",
+        "modelDescription": "在拍摄脚本制作 Prompt 中调用。打开同屏表单收集任务名称、创作内容或剧本依据、画幅、镜头节奏、连续性、声音和视频生成模型要求，提交后直接编写完整逐镜头拍摄脚本，并为每个镜头提供图生视频提示词。任务名称必填，其余字段可留空。",
         "userDescription": "打开拍摄脚本制作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_shooting_script_parameters",

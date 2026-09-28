@@ -10,7 +10,7 @@ import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
-  RECORD_TITLE_FIELD,
+  TASK_NAME_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
@@ -308,9 +308,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       throw new Error('记录不存在或已被删除。');
     }
 
-    const expectedTitle = record.title || '旧记录（无标题）';
-    if (confirmationTitle !== expectedTitle) {
-      throw new Error('输入的标题与记录标题不一致，未删除。');
+    const expectedTaskName = record.taskName;
+    if (confirmationTitle !== expectedTaskName) {
+      throw new Error('输入的名称与任务名称不一致，未删除。');
     }
     if (!this.database.deleteRecord(record.id)) {
       throw new Error('删除记录失败。');
@@ -335,7 +335,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     void session.panel.webview.postMessage({
       command: 'generated-result',
       recordId: record.id,
-      title: record.title || '旧记录（无标题）',
+      taskName: record.taskName,
       resultType: isBilingualContent ? 'bilingual-content' : isContent ? 'content' : 'prompt',
       ...(isContent && !isBilingualContent
         ? { content: record.generatedResultContent ?? '' }
@@ -361,7 +361,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     void session.panel.webview.postMessage({
       command: 'generated-chapters',
       recordId,
-      title: record.title || '旧记录（无标题）',
+      taskName: record.taskName,
       chapters
     });
   }
@@ -460,7 +460,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
       this.database.saveRecord({
-        title: values.title,
+        taskName: values.taskName,
         categoryId: workflow.toolName,
         categoryName: workflow.title,
         projectId: message.projectId,
@@ -494,13 +494,13 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const workflow = this.findWorkflow(record.categoryId);
     const savedFields = readFormFields(record.schema);
-    const fields = savedFields.some((field) => field.name === 'title')
+    const fields = savedFields.some((field) => field.name === 'taskName')
       ? savedFields
-      : [RECORD_TITLE_FIELD, ...savedFields];
+      : [TASK_NAME_FIELD, ...savedFields];
     const recordValues = readFormValues(record.data);
     const initialValues = {
       ...recordValues,
-      title: record.title ?? recordValues.title ?? '',
+      taskName: record.taskName,
       projectId: record.projectId
     };
     const editWorkflow: FormWorkflow = { ...workflow, fields };
@@ -526,9 +526,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       }
       const workflow = this.findWorkflow(record.categoryId);
       const savedFields = readFormFields(record.schema);
-      const fields = savedFields.some((field) => field.name === 'title')
+      const fields = savedFields.some((field) => field.name === 'taskName')
         ? savedFields
-        : [RECORD_TITLE_FIELD, ...savedFields];
+        : [TASK_NAME_FIELD, ...savedFields];
       const values = validateWorkflowFormValues(message.values, { ...workflow, fields });
       if (!values || typeof message.projectId !== 'string' ||
           (workflow.requiresProject && message.projectId === '0') ||
@@ -538,7 +538,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
       const updatedRecord = this.database.updateRecord(record.id, {
-        title: values.title,
+        taskName: values.taskName,
         projectId: message.projectId,
         schema: fields,
         data: values
@@ -732,7 +732,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
           session.projectFilter === 'all' ? undefined : session.projectFilter
         )).map((record) => ({
         id: record.id,
-        title: record.title,
+        taskName: record.taskName,
         projectId: record.projectId,
         projectName: projectNames.get(record.projectId),
         createdAt: record.createdAt,
@@ -1015,7 +1015,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
   <style nonce="${nonce}">
     :root {
       color-scheme: light dark;
@@ -1224,7 +1224,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .add-image-area .image-status:empty { display: none; }
     .add-record-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .add-record-error[hidden] { display: none; }
-    #chapter-content-dialog { width: min(580px, calc(100vw - 32px)); }
+    #chapter-content-dialog { width: min(840px, calc(100vw - 32px)); }
     .result-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .result-error[hidden] { display: none; }
     .result-field { display: grid; gap: 6px; margin-top: 12px; }
@@ -1245,16 +1245,24 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       resize: none; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .result-dialog textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
-    .chapter-content-table { border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px; }
-    .chapter-content-header, .chapter-content-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px 10px; }
-    .chapter-content-header { color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
-    .chapter-content-row + .chapter-content-row { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
-    .chapter-content-cell { min-width: 0; overflow-wrap: anywhere; }
-    .chapter-content-detail { min-width: 0; }
-    .chapter-content-title { display: block; margin: 0 0 6px; overflow-wrap: anywhere; font-weight: 600; }
-    .chapter-content-text { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .chapter-content-list {
+      margin: 0; padding: 0 14px; list-style: none;
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px;
+    }
+    .chapter-content-item { display: grid; gap: 9px; padding: 16px 4px 18px; }
+    .chapter-content-item + .chapter-content-item { border-top: 1px solid var(--vscode-panel-border); }
+    .chapter-content-heading { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: baseline; gap: 12px; }
+    .chapter-content-index { color: var(--vscode-descriptionForeground); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .chapter-content-title { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 15px; font-weight: 600; line-height: 1.45; }
+    .chapter-content-text { margin: 0 0 0 84px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
     .chapter-content-empty { margin: 0; padding: 20px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     .chapter-content-empty[hidden] { display: none; }
+    @media (max-width: 480px) {
+      .chapter-content-list { padding: 0 10px; }
+      .chapter-content-item { padding: 14px 2px 16px; }
+      .chapter-content-heading { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .chapter-content-text { margin-left: 0; }
+    }
     .dialog-resize-handle { position: absolute; z-index: 2; touch-action: none; user-select: none; }
     [data-resizable="false"] .dialog-resize-handle { display: none; }
     .dialog-resize-horizontal { top: 36px; right: 0; bottom: 10px; width: 7px; cursor: ew-resize; }
@@ -1406,10 +1414,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         <button class="dialog-close" id="close-chapter-content" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
       <div class="dialog-body">
-        <div class="chapter-content-table" role="table" aria-label="章节内容列表">
-          <div class="chapter-content-header" role="row"><span role="columnheader">章节</span><span role="columnheader">章节内容</span></div>
-          <div id="chapter-content-list" role="rowgroup"></div>
-        </div>
+        <ol id="chapter-content-list" class="chapter-content-list" aria-label="章节内容列表"></ol>
         <p id="chapter-content-empty" class="chapter-content-empty" role="status" hidden>暂无已保存的章节内容</p>
       </div>
       <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
@@ -1900,9 +1905,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
 
     function openDeleteDialog(record) {
-      const title = record.title || '旧记录（无标题）';
-      pendingDelete = { kind: 'record', id: record.id, title };
-      showDeleteNameDialog('记录', title);
+      const taskName = record.taskName;
+      pendingDelete = { kind: 'record', id: record.id, title: taskName };
+      showDeleteNameDialog('任务', taskName);
     }
 
     function openWorkProjectDeleteWarning(project) {
@@ -1981,13 +1986,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
 
     function openResultDialog(record) {
-      const title = record.title || '旧记录（无标题）';
+      const taskName = record.taskName;
       const isBilingualContent = bilingualContentWorkflowIds.includes(selectedCategoryId);
       viewingResultType = isBilingualContent
         ? 'bilingual-content'
         : contentWorkflowIds.includes(selectedCategoryId) ? 'content' : 'prompt';
       const isContent = viewingResultType !== 'prompt';
-      resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + title;
+      resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + taskName;
       contentResultField.hidden = !isContent || isBilingualContent;
       promptResultFields.hidden = isContent && !isBilingualContent;
       configureResultLabels(selectedCategoryId, true);
@@ -2010,7 +2015,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 
     function openChapterContentDialog(record) {
       viewingChapterRecordId = record.id;
-      chapterContentDialogTitle.textContent = '查看章节：' + (record.title || '旧记录（无标题）');
+      chapterContentDialogTitle.textContent = '查看章节：' + record.taskName;
       chapterContentList.replaceChildren();
       chapterContentEmpty.hidden = true;
       chapterContentDialog.showModal();
@@ -2027,25 +2032,22 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       chapterContentList.replaceChildren();
       chapterContentEmpty.hidden = chapters.length > 0;
       for (const chapter of chapters) {
-        const row = document.createElement('div');
-        row.className = 'chapter-content-row';
-        row.setAttribute('role', 'row');
+        const item = document.createElement('li');
+        item.className = 'chapter-content-item';
+        const heading = document.createElement('div');
+        heading.className = 'chapter-content-heading';
         const number = document.createElement('span');
-        number.className = 'chapter-content-cell';
-        number.setAttribute('role', 'cell');
+        number.className = 'chapter-content-index';
         number.textContent = '第 ' + chapter.chapterNumber + ' 章';
-        const detail = document.createElement('div');
-        detail.className = 'chapter-content-detail';
-        detail.setAttribute('role', 'cell');
-        const title = document.createElement('strong');
+        const title = document.createElement('h3');
         title.className = 'chapter-content-title';
         title.textContent = chapter.title;
         const content = document.createElement('p');
         content.className = 'chapter-content-text';
         content.textContent = chapter.content;
-        detail.append(title, content);
-        row.append(number, detail);
-        chapterContentList.append(row);
+        heading.append(number, title);
+        item.append(heading, content);
+        chapterContentList.append(item);
       }
     }
 
@@ -2177,7 +2179,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         const title = document.createElement('button');
         title.type = 'button';
         title.className = 'record-title-button';
-        title.textContent = record.title || '旧记录（无标题）';
+        title.textContent = record.taskName;
         title.title = title.textContent;
         title.setAttribute('aria-label', '查看' + title.textContent + '的生成内容');
         title.addEventListener('click', () => {
@@ -2340,7 +2342,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     deleteForm.addEventListener('submit', (event) => {
       event.preventDefault();
       if (!pendingDelete || deleteTitle.value !== pendingDelete.title) {
-        deleteError.textContent = '输入的标题与记录标题不一致。';
+        deleteError.textContent = '输入的名称与任务名称不一致。';
         deleteError.hidden = false;
         confirmDelete.disabled = true;
         return;
@@ -2465,7 +2467,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         const isBilingualContent = viewingResultType === 'bilingual-content';
         contentResultField.hidden = !isContent;
         promptResultFields.hidden = isContent && !isBilingualContent;
-        resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + event.data.title;
+        resultDialogTitle.textContent = getResultActionLabel(selectedCategoryId) + '：' + event.data.taskName;
         configureResultLabels(selectedCategoryId, false);
         generatedContent.value = event.data.content ?? '';
         generatedResultZh.value = event.data.contentZh ?? '';

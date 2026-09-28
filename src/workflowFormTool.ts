@@ -176,12 +176,12 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
       if (!generatedContent.trim()) {
         throw new Error('关联创作任务没有可用的生成内容。');
       }
-      parameters.sourceMaterial = `以下为项目“${this.database.listWorkProjects().find((project) => project.id === submission.projectId)?.name ?? ''}”中关联任务“${sourceTask.title}”生成的完整内容：\n${generatedContent}`;
+      parameters.sourceMaterial = `以下为项目“${this.database.listWorkProjects().find((project) => project.id === submission.projectId)?.name ?? ''}”中关联任务“${sourceTask.taskName}”生成的完整内容：\n${generatedContent}`;
     }
     let recordId = submitted?.recordId;
     if (values && !submitted) {
       const record = this.database.saveRecord({
-        title: values.title,
+        taskName: values.taskName,
         categoryId: this.workflow.toolName,
         categoryName: this.workflow.title,
         projectId: submission.projectId,
@@ -324,7 +324,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       new vscode.LanguageModelTextPart(JSON.stringify({
         status: 'saved',
         recordId: record.id,
-        title: record.title
+        taskName: record.taskName
       }))
     ]);
   }

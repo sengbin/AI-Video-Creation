@@ -1,6 +1,6 @@
 ---
 description: 根据已生成的内容创作任务改编短片、电影或电视剧剧本
-argument-hint: 选择内容创作任务并填写作品名称、题材、表达风格和时长上限
+argument-hint: 选择内容创作任务并填写任务名称和时长上限
 name: 'AI 视频创作-剧本创作'
 agent: 'AI 视频创作'
 ---
@@ -9,7 +9,7 @@ agent: 'AI 视频创作'
 
 ## 参数工具
 
-本流程使用 `ai-video-creation-tools_collect_screenplay_parameters` 收集作品名称、项目、关联创作任务、单集最大时长、最大总集数、题材、表达风格和补充要求。
+本流程使用 `ai-video-creation-tools_collect_screenplay_parameters` 收集任务名称、项目、关联创作任务、单集最大时长、最大总集数和补充要求。
 
 ## 素材与范围
 

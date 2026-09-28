@@ -34,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   database.deleteRecordsWithConflictingFields(
     [SCREENPLAY_WORKFLOW_NAME],
-    ['format', 'duration', 'sourceMaterial', 'episodeDurationSeconds']
+    ['format', 'sourceMaterial', 'episodeDurationSeconds']
   );
   const submissions = new WorkflowSubmissionStore();
   const recordsView = new PromptRecordsViewProvider(

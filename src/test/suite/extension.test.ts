@@ -31,33 +31,52 @@ suite('AI视频创作助手扩展', () => {
     const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.strictEqual(workflow.requiresProject, true);
-    assert.ok(!workflow.fields.some((field) => field.name === 'format' || field.name === 'duration'));
+    assert.ok(!workflow.fields.some((field) => field.name === 'format'));
     assert.ok(workflow.fields.some((field) => field.name === 'maxEpisodeDurationSeconds' && field.required));
     assert.ok(!workflow.fields.some((field) => field.name === 'episodeDurationSeconds'));
     assert.ok(workflow.fields.some((field) => field.name === 'maxEpisodes' && field.required));
-    assert.ok(workflow.fields.some((field) => field.name === 'genre' && field.allowCustom));
-    assert.ok(workflow.fields.some((field) => field.name === 'style' && field.allowCustom));
+    assert.ok(!workflow.fields.some((field) => field.name === 'genre' || field.name === 'style'));
+    const creativeWorkflow = formWorkflows.find((item) => item.toolName === CREATIVE_WRITING_WORKFLOW_NAME);
+    const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
+    assert.ok(creativeWorkflow?.fields.some((field) => field.name === 'genre'));
+    assert.ok(!creativeWorkflow?.fields.some((field) => field.name === 'style'));
+    assert.deepStrictEqual(creativeWorkflow?.fields.find((field) => field.name === 'genre')?.options, [
+      '悬疑', '爱情', '科幻', '奇幻', '喜剧', '现实题材', '历史', '武侠', '冒险', '恐怖'
+    ]);
+    assert.strictEqual(creativeWorkflow?.fields.find((field) => field.name === 'genre')?.allowCustom, true);
+    assert.strictEqual(creativeWorkflow?.fields.find((field) => field.name === 'genre')?.customInputBelow, true);
+    assert.ok(imageWorkflow?.fields.some((field) => field.name === 'genre'));
+    assert.strictEqual(imageWorkflow?.fields.find((field) => field.name === 'genre')?.label, '题材');
+    assert.deepStrictEqual(imageWorkflow?.fields.find((field) => field.name === 'genre')?.options, [
+      '悬疑', '爱情', '科幻', '奇幻', '喜剧', '现实题材', '历史', '武侠', '冒险', '恐怖'
+    ]);
+    assert.strictEqual(imageWorkflow?.fields.find((field) => field.name === 'genre')?.allowCustom, true);
+    assert.ok(!imageWorkflow?.fields.some((field) => field.name === 'style'));
+    const creativeHtml = renderAddRecordFields(creativeWorkflow, []);
+    assert.ok(creativeHtml.includes('<select id="genre" name="genre" data-custom-input="genre-custom">'));
+    assert.ok(creativeHtml.includes('<div class="select-with-custom custom-input-below">'));
+    assert.ok(creativeHtml.includes('<option value="__custom__">其他</option>'));
 
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-screenplay-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     try {
       const project = database.createWorkProject({ name: '剧本项目', description: '' });
       const task = database.saveRecord({
-        title: '故事创意',
+        taskName: '故事创意',
         categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
         categoryName: '创意写作',
         projectId: project.id,
-        schema: [{ name: 'title' }],
-        data: { title: '故事创意' }
+        schema: [{ name: 'taskName' }],
+        data: { taskName: '故事创意' }
       });
       database.updateGeneratedContent(task.id, '完整生成正文');
       database.saveRecord({
-        title: '尚未生成的任务',
+        taskName: '尚未生成的任务',
         categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
         categoryName: '创意写作',
         projectId: project.id,
-        schema: [{ name: 'title' }],
-        data: { title: '尚未生成的任务' }
+        schema: [{ name: 'taskName' }],
+        data: { taskName: '尚未生成的任务' }
       });
 
       const tasks = database.listGeneratedContentTasks([CREATIVE_WRITING_WORKFLOW_NAME], []);
@@ -77,6 +96,9 @@ suite('AI视频创作助手扩展', () => {
     const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.ok(imageWorkflow);
+    assert.ok(formWorkflows.every((item) =>
+      item.fields.some((field) => field.name === 'taskName' && field.label === '任务名称')
+    ));
 
     const project = {
       id: 'project-id',
@@ -88,7 +110,7 @@ suite('AI视频创作助手扩展', () => {
     const html = renderAddRecordFields(workflow, [project]);
     assert.ok(html.includes('name="projectId"'));
     assert.ok(html.includes('&lt;项目&gt;'));
-    assert.ok(html.includes('name="title"'));
+    assert.ok(html.includes('name="taskName"'));
     assert.ok(html.includes('name="chapterMinWords"'));
     assert.ok(html.includes('name="chapterMaxWords"'));
     assert.ok(html.includes('name="maxChapters"'));
@@ -97,7 +119,7 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(/name="maxChapters"[^>]*value="20"/.test(html));
 
     const editHtml = renderAddRecordFields(workflow, [project], {
-      title: '预填任务',
+      taskName: '预填任务',
       idea: '已保存的灵感',
       projectId: project.id
     });
@@ -107,7 +129,7 @@ suite('AI视频创作助手扩展', () => {
 
     const values = Object.fromEntries(workflow.fields.map((field) => [
       field.name,
-      field.name === 'title' ? '列表新增任务' :
+      field.name === 'taskName' ? '列表新增任务' :
         field.name === 'chapterMinWords' ? '200' :
           field.name === 'chapterMaxWords' ? '2500' :
             field.name === 'maxChapters' ? '20' : field.required ? '1' : ''
@@ -118,15 +140,27 @@ suite('AI视频创作助手扩展', () => {
       undefined
     );
     assert.strictEqual(
-      validateWorkflowFormValues({ ...values, title: '' }, workflow),
+      validateWorkflowFormValues({ ...values, taskName: '' }, workflow),
       undefined
     );
 
     const imageHtml = renderAddRecordFields(imageWorkflow, []);
     assert.ok(imageHtml.includes('id="add-image-file-input"'));
+    const taskNamePosition = imageHtml.indexOf('name="taskName"');
+    const attachmentPosition = imageHtml.indexOf('class="add-image-area"');
+    const genrePosition = imageHtml.indexOf('name="genre"');
+    assert.ok(taskNamePosition >= 0 && taskNamePosition < attachmentPosition && attachmentPosition < genrePosition);
     assert.ok(imageHtml.includes(`name="${IMAGE_ATTACHMENTS_FIELD}"`));
+    assert.ok(imageHtml.includes('<select id="genre" name="genre" data-custom-input="genre-custom">'));
+    assert.ok(imageHtml.includes('<div class="select-with-custom custom-input-below">'));
+    assert.ok(imageHtml.includes('<option value="__custom__">其他</option>'));
+    assert.ok(imageHtml.indexOf('<option value="恐怖">恐怖</option>') < imageHtml.indexOf('<option value="__custom__">其他</option>'));
+    assert.ok(imageHtml.includes('id="genre-custom" name="genre__custom"'));
+    const customGenreHtml = renderAddRecordFields(imageWorkflow, [], { genre: '蒸汽朋克' });
+    assert.ok(customGenreHtml.includes('<option value="__custom__" selected>其他</option>'));
+    assert.ok(customGenreHtml.includes('name="genre__custom" type="text" placeholder="输入自定义内容" value="蒸汽朋克"'));
     const imageEditHtml = renderAddRecordFields(imageWorkflow, [], {
-      title: '保留图片的记录',
+      taskName: '保留图片的记录',
       [IMAGE_ATTACHMENTS_FIELD]: '[{"mimeType":"image/png","data":"aGVsbG8="}]'
     });
     assert.ok(imageEditHtml.includes('value="[{&quot;mimeType&quot;:&quot;image/png&quot;,&quot;data&quot;:&quot;aGVsbG8=&quot;}]"'));
@@ -139,14 +173,14 @@ suite('AI视频创作助手扩展', () => {
 
     try {
       const record = database.saveRecord({
-        title: '示例记录',
+        taskName: '示例记录',
         categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
         categoryName: '创意写作',
         schema: [
-          { name: 'title', label: '标题', required: true },
+          { name: 'taskName', label: '任务名称', required: true },
           { name: 'genre', label: '题材' }
         ],
-        data: { title: '示例记录', genre: '科幻' }
+        data: { taskName: '示例记录', genre: '科幻' }
       });
 
       assert.ok(fs.existsSync(path.join(storagePath, 'creative-projects.sqlite')));
@@ -170,17 +204,17 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(savedResult?.generatedResultEnglish, 'English prompt body');
       assert.ok(savedResult?.generatedAt);
       const updatedRecord = database.updateRecord(record.id, {
-        title: '修改后的记录',
+        taskName: '修改后的记录',
         projectId: record.projectId,
         schema: record.schema,
-        data: { title: '修改后的记录', genre: '奇幻' }
+        data: { taskName: '修改后的记录', genre: '奇幻' }
       });
       assert.ok(updatedRecord);
-      assert.strictEqual(updatedRecord.title, '修改后的记录');
+      assert.strictEqual(updatedRecord.taskName, '修改后的记录');
       assert.strictEqual(updatedRecord.generatedResultChinese, '中文提示词正文');
       assert.strictEqual(updatedRecord.generatedResultEnglish, 'English prompt body');
       assert.strictEqual(updatedRecord.createdAt, record.createdAt);
-      assert.deepStrictEqual(updatedRecord.data, { title: '修改后的记录', genre: '奇幻' });
+      assert.deepStrictEqual(updatedRecord.data, { taskName: '修改后的记录', genre: '奇幻' });
       assert.strictEqual(database.deleteRecord(record.id), true);
       assert.strictEqual(database.getRecord(record.id), undefined);
     } finally {
@@ -193,18 +227,18 @@ suite('AI视频创作助手扩展', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-chapter-cleanup-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const legacyRecord = database.saveRecord({
-      title: '旧写作记录',
+      taskName: '旧写作记录',
       categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
       categoryName: '创意写作',
       schema: [{ name: 'episodeDurationSeconds' }, { name: 'maxEpisodes' }],
-      data: { title: '旧写作记录', episodeDurationSeconds: '30', maxEpisodes: '10' }
+      data: { taskName: '旧写作记录', episodeDurationSeconds: '30', maxEpisodes: '10' }
     });
     const unrelatedRecord = database.saveRecord({
-      title: '其他记录',
+      taskName: '其他记录',
       categoryId: 'other-workflow',
       categoryName: '其他',
       schema: [{ name: 'maxEpisodes' }],
-      data: { title: '其他记录', maxEpisodes: '10' }
+      data: { taskName: '其他记录', maxEpisodes: '10' }
     });
 
     try {
@@ -238,20 +272,20 @@ suite('AI视频创作助手扩展', () => {
     try {
       const project = database.createWorkProject({ name: '短片主题', description: '同一主题下的作品集合' });
       const boundRecord = database.saveRecord({
-        title: '项目记录',
+        taskName: '项目记录',
         categoryId: 'story',
         categoryName: '文字作品',
         projectId: project.id,
         schema: [],
-        data: { title: '项目记录' }
+        data: { taskName: '项目记录' }
       });
       const unassignedRecord = database.saveRecord({
-        title: '独立记录',
+        taskName: '独立记录',
         categoryId: 'story',
         categoryName: '文字作品',
         projectId: '0',
         schema: [],
-        data: { title: '独立记录' }
+        data: { taskName: '独立记录' }
       });
 
       assert.strictEqual(boundRecord.projectId, project.id);
@@ -275,20 +309,20 @@ suite('AI视频创作助手扩展', () => {
     try {
       const project = database.createWorkProject({ name: '短片项目', description: '' });
       const firstRecord = database.saveRecord({
-        title: '相遇',
+        taskName: '相遇',
         categoryId: 'story',
         categoryName: '创意写作',
         projectId: project.id,
         schema: [],
-        data: { title: '相遇' }
+        data: { taskName: '相遇' }
       });
       const duplicateCategoryRecord = database.saveRecord({
-        title: '相遇的另一个版本',
+        taskName: '相遇的另一个版本',
         categoryId: 'story',
         categoryName: '创意写作',
         projectId: project.id,
         schema: [],
-        data: { title: '相遇的另一个版本' }
+        data: { taskName: '相遇的另一个版本' }
       });
 
       assert.deepStrictEqual(database.listRecords('story', project.id), [duplicateCategoryRecord, firstRecord]);
@@ -319,12 +353,12 @@ suite('AI视频创作助手扩展', () => {
       data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2]).toString('base64')
     };
     const record = database.saveRecord({
-      title: '含图片的创作记录',
+      taskName: '含图片的创作记录',
       categoryId: workflow.toolName,
       categoryName: workflow.title,
       schema: workflow.fields,
       data: {
-        title: '含图片的创作记录',
+        taskName: '含图片的创作记录',
         [IMAGE_ATTACHMENTS_FIELD]: JSON.stringify([attachment])
       }
     });
@@ -342,10 +376,10 @@ suite('AI视频创作助手扩展', () => {
       );
 
       const updatedRecord = database.updateRecord(record.id, {
-        title: '编辑后的图片创作记录',
+        taskName: '编辑后的图片创作记录',
         projectId: record.projectId,
         schema: workflow.fields,
-        data: { ...restoredValues, title: '编辑后的图片创作记录' }
+        data: { ...restoredValues, taskName: '编辑后的图片创作记录' }
       });
       assert.ok(updatedRecord);
       assert.deepStrictEqual(
@@ -358,7 +392,7 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('能够迁移旧数据库并保留已有记录', async () => {
+  test('旧记录数据库不迁移并直接删除', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-db-migration-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');
     fs.mkdirSync(storagePath);
@@ -379,61 +413,72 @@ suite('AI视频创作助手扩展', () => {
       );
     `);
     legacyConnection.close();
+    const existingConnection = new DatabaseSync(path.join(storagePath, 'creative-projects.sqlite'));
+    existingConnection.exec(`
+      CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      INSERT INTO projects VALUES ('old-project', '旧项目');
+      CREATE TABLE prompt_records (id TEXT PRIMARY KEY, title TEXT);
+      INSERT INTO prompt_records VALUES ('old-record', '旧任务');
+      PRAGMA user_version = 3;
+    `);
+    existingConnection.close();
 
     const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
     try {
-      const [record] = database.listRecords('legacy-category');
-      assert.strictEqual(record.id, 'legacy-id');
-      assert.strictEqual(record.title, undefined);
-      assert.strictEqual(record.projectId, '0');
-      assert.strictEqual(record.generatedAt, undefined);
-      assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
-      assert.strictEqual(record.generatedResultEnglish, undefined);
+      assert.deepStrictEqual(database.listRecords(), []);
+      assert.deepStrictEqual(database.listWorkProjects(), []);
+      assert.strictEqual(database.getRecord('old-record'), undefined);
+      assert.ok(!fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
+      const freshConnection = new DatabaseSync(path.join(storagePath, 'creative-projects.sqlite'));
+      try {
+        const columns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        assert.ok(columns.some((column) => column.name === 'task_name'));
+        assert.ok(!columns.some((column) => column.name === 'title'));
+        assert.strictEqual((freshConnection.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 4);
+      } finally {
+        freshConnection.close();
+      }
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   });
 
-  test('能够迁移旧写作工作流标识并保留作品记录', async () => {
+  test('旧工作流标识不再兼容改写', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-writing-category-migration-'));
     const storageUri = vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage'));
     let database = await PromptDatabase.open(storageUri);
 
     try {
       const creativeRecord = database.saveRecord({
-        title: '创意作品',
+        taskName: '创意作品',
         categoryId: 'ai-video-creation-tools_collect_story_parameters',
         categoryName: '创意写故事',
         schema: [],
-        data: { title: '创意作品' }
+        data: { taskName: '创意作品' }
       });
       const imageRecord = database.saveRecord({
-        title: '图片灵感作品',
+        taskName: '图片灵感作品',
         categoryId: 'ai-video-creation-tools_collect_image_story_parameters',
         categoryName: '图片写故事',
         schema: [],
-        data: { title: '图片灵感作品' }
+        data: { taskName: '图片灵感作品' }
       });
 
       database.dispose();
       database = await PromptDatabase.open(storageUri);
 
-      const migratedCreativeRecord = database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME)[0];
-      const migratedImageRecord = database.listRecords(IMAGE_INSPIRED_WRITING_WORKFLOW_NAME)[0];
-      assert.strictEqual(migratedCreativeRecord.id, creativeRecord.id);
-      assert.strictEqual(migratedCreativeRecord.categoryName, '创意写作');
-      assert.strictEqual(migratedImageRecord.id, imageRecord.id);
-      assert.strictEqual(migratedImageRecord.categoryName, '图片灵感写作');
-      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_story_parameters'), []);
-      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_image_story_parameters'), []);
+      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_story_parameters'), [creativeRecord]);
+      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_image_story_parameters'), [imageRecord]);
+      assert.deepStrictEqual(database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME), []);
+      assert.deepStrictEqual(database.listRecords(IMAGE_INSPIRED_WRITING_WORKFLOW_NAME), []);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   });
 
-  test('能够将旧版项目结构迁移并保留原有关联', async () => {
+  test('旧版项目数据库不迁移并清空旧项目数据', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-project-migration-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');
     fs.mkdirSync(storagePath);
@@ -475,30 +520,17 @@ suite('AI视频创作助手扩展', () => {
 
     const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
     try {
-      assert.deepStrictEqual(database.listWorkProjects(), [{
-        id: 'legacy-project-id',
-        name: '旧作品项目',
-        description: '已保存的项目简介',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z'
-      }]);
-      const record = database.getRecord('legacy-record-id');
-      assert.strictEqual(record?.projectId, 'legacy-project-id');
-      assert.strictEqual(record?.generatedResultContent, '保留的正文');
-      assert.strictEqual(record?.generatedAt, undefined);
-      assert.deepStrictEqual(database.listRecords('story', 'legacy-project-id'), [record]);
-      const migratedDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
-      assert.ok(fs.existsSync(migratedDatabasePath));
+      assert.deepStrictEqual(database.listWorkProjects(), []);
+      assert.strictEqual(database.getRecord('legacy-record-id'), undefined);
       assert.ok(!fs.existsSync(databasePath));
-      const migratedConnection = new DatabaseSync(migratedDatabasePath);
+      const freshDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
+      const freshConnection = new DatabaseSync(freshDatabasePath);
       try {
-        const promptColumns = migratedConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        const projectColumns = migratedConnection.prepare('PRAGMA table_info(projects)').all() as { name: string }[];
-        assert.ok(promptColumns.some((column) => column.name === 'generated_at'));
-        assert.ok(!promptColumns.some((column) => column.name === 'updated_at'));
-        assert.ok(projectColumns.some((column) => column.name === 'updated_at'));
+        const promptColumns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        assert.ok(promptColumns.some((column) => column.name === 'task_name'));
+        assert.ok(!promptColumns.some((column) => column.name === 'title'));
       } finally {
-        migratedConnection.close();
+        freshConnection.close();
       }
     } finally {
       database.dispose();
@@ -506,7 +538,7 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('迁移合集数据库时保留项目关联并移除旧任务集数字段', async () => {
+  test('旧合集数据库不迁移并删除旧记录', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collection-migration-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');
     fs.mkdirSync(storagePath);
@@ -552,30 +584,24 @@ suite('AI视频创作助手扩展', () => {
 
     const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
     try {
-      assert.strictEqual(database.listWorkProjects()[0].id, 'collection-id');
-      assert.strictEqual(database.listWorkProjects()[0].name, '旧合集名称');
-      assert.strictEqual(database.getRecord('collection-record-id')?.projectId, 'collection-id');
+      assert.deepStrictEqual(database.listWorkProjects(), []);
+      assert.strictEqual(database.getRecord('collection-record-id'), undefined);
 
-      const migratedDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
-      assert.ok(fs.existsSync(migratedDatabasePath));
+      const freshDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
+      assert.ok(fs.existsSync(freshDatabasePath));
       assert.ok(!fs.existsSync(legacyDatabasePath));
-      const migratedConnection = new DatabaseSync(migratedDatabasePath);
+      const freshConnection = new DatabaseSync(freshDatabasePath);
       try {
-        const taskColumns = migratedConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        const projectTables = migratedConnection.prepare(`
+        const taskColumns = freshConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        const projectTables = freshConnection.prepare(`
           SELECT name FROM sqlite_master WHERE type = 'table'
         `).all() as { name: string }[];
-        const uniqueIndexes = migratedConnection.prepare(`
-          SELECT name FROM sqlite_master
-          WHERE type = 'index' AND tbl_name = 'prompt_records' AND sql LIKE '%episode_number%'
-        `).all() as { name: string }[];
-        assert.ok(taskColumns.some((column) => column.name === 'project_id'));
-        assert.ok(!taskColumns.some((column) => column.name === 'collection_id' || column.name === 'episode_number'));
+        assert.ok(taskColumns.some((column) => column.name === 'task_name'));
+        assert.ok(!taskColumns.some((column) => column.name === 'title'));
         assert.ok(projectTables.some((table) => table.name === 'projects'));
         assert.ok(!projectTables.some((table) => table.name === 'collections'));
-        assert.deepStrictEqual(uniqueIndexes, []);
       } finally {
-        migratedConnection.close();
+        freshConnection.close();
       }
     } finally {
       database.dispose();
@@ -587,7 +613,7 @@ suite('AI视频创作助手扩展', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-submission-'));
     let database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const workflow = formWorkflows[0];
-    const values = { title: '已选记录', idea: '灯塔收到未来的信号' };
+    const values = { taskName: '已选记录', idea: '灯塔收到未来的信号' };
     const submissions = new WorkflowSubmissionStore();
     const tool = new WorkflowFormTool(workflow, database, submissions);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -613,12 +639,12 @@ suite('AI视频创作助手扩展', () => {
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const project = database.createWorkProject({ name: '测试项目', description: '' });
     const sourceRecord = database.saveRecord({
-      title: '分集创意',
+      taskName: '分集创意',
       categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
       categoryName: '创意写作',
       projectId: project.id,
       schema: [],
-      data: { title: '分集创意' }
+      data: { taskName: '分集创意' }
     });
     database.saveGeneratedChapterContents(sourceRecord.id, [
       { chapterNumber: 1, title: '第一集', content: '第一集完整正文' },
@@ -633,13 +659,11 @@ suite('AI视频创作助手扩展', () => {
 
     try {
       submissions.set(workflow.toolName, {
-        title: '改编剧本',
+        taskName: '改编剧本',
         sourceTaskId: sourceRecord.id,
         sourceMaterial: '不应使用的旧手填素材',
         maxEpisodeDurationSeconds: '60',
         maxEpisodes: '2',
-        genre: '悬疑',
-        style: '写实自然',
         additionalInfo: ''
       }, undefined, project.id);
       const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
@@ -652,6 +676,8 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(parameters.sourceTaskId, undefined);
       assert.strictEqual(parameters.maxEpisodeDurationSeconds, 60);
       assert.strictEqual(parameters.maxEpisodes, 2);
+      assert.strictEqual(parameters.genre, undefined);
+      assert.strictEqual(parameters.style, undefined);
     } finally {
       cancellationSource.dispose();
       database.dispose();
@@ -666,7 +692,7 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(workflow);
     const imageBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
     const values = {
-      title: '图片参考',
+      taskName: '图片参考',
       [IMAGE_ATTACHMENTS_FIELD]: JSON.stringify([{
         mimeType: 'image/png',
         data: imageBytes.toString('base64')
@@ -682,7 +708,7 @@ suite('AI视频创作助手扩展', () => {
       const textPart = result.content[0];
       const imagePart = result.content[1];
       assert.ok(textPart instanceof vscode.LanguageModelTextPart);
-      assert.deepStrictEqual(JSON.parse(textPart.value).parameters, { title: '图片参考' });
+      assert.deepStrictEqual(JSON.parse(textPart.value).parameters, { taskName: '图片参考' });
       assert.ok(imagePart instanceof vscode.LanguageModelDataPart);
       assert.strictEqual(imagePart.mimeType, 'image/png');
       assert.deepStrictEqual(Buffer.from(imagePart.data), imageBytes);
@@ -697,11 +723,11 @@ suite('AI视频创作助手扩展', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-result-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const record = database.saveRecord({
-      title: '待生成记录',
+      taskName: '待生成记录',
       categoryId: 'ai-video-creation-tools_collect_character_parameters',
       categoryName: '创意写作',
       schema: [],
-      data: { title: '待生成记录' }
+      data: { taskName: '待生成记录' }
     });
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -745,11 +771,11 @@ suite('AI视频创作助手扩展', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-story-result-'));
     let database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const record = database.saveRecord({
-      title: '待生成作品',
+      taskName: '待生成作品',
       categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
       categoryName: '图片灵感写作',
       schema: [],
-      data: { title: '待生成作品', chapterMinWords: '500', chapterMaxWords: '2500', maxChapters: '2' }
+      data: { taskName: '待生成作品', chapterMinWords: '500', chapterMaxWords: '2500', maxChapters: '2' }
     });
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -843,11 +869,11 @@ suite('AI视频创作助手扩展', () => {
       ]);
       for (const workflow of contentWorkflows) {
         const record = database.saveRecord({
-          title: workflow.title,
+          taskName: workflow.title,
           categoryId: workflow.toolName,
           categoryName: workflow.title,
           schema: [],
-          data: { title: workflow.title }
+          data: { taskName: workflow.title }
         });
         database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
         database.saveGeneratedChapterContents(record.id, [
@@ -876,11 +902,11 @@ suite('AI视频创作助手扩展', () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-shooting-result-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const record = database.saveRecord({
-      title: '双语拍摄脚本',
+      taskName: '双语拍摄脚本',
       categoryId: SHOOTING_SCRIPT_WORKFLOW_NAME,
       categoryName: '拍摄脚本制作',
       schema: [],
-      data: { title: '双语拍摄脚本' }
+      data: { taskName: '双语拍摄脚本' }
     });
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -1039,31 +1065,31 @@ suite('AI视频创作助手扩展', () => {
 
     const expectedFieldNames: Readonly<Record<string, readonly string[]>> = {
       'ai-video-creation-tools_collect_creative_writing_parameters': [
-        'title', 'idea', 'genre', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'style', 'additionalInfo'
+        'taskName', 'idea', 'genre', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_image_inspired_writing_parameters': [
-        'title', 'genre', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'visualElements', 'additionalInfo'
+        'taskName', 'genre', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'visualElements', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_novel_parameters': [
-        'title', 'target', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'preserve', 'adjustments', 'additionalInfo'
+        'taskName', 'target', 'chapterMinWords', 'chapterMaxWords', 'maxChapters', 'preserve', 'adjustments', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_character_parameters': [
-        'title', 'characterType', 'appearance', 'clothing', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
+        'taskName', 'characterType', 'appearance', 'clothing', 'expressionPose', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_scene_parameters': [
-        'title', 'placeType', 'layout', 'environment', 'composition', 'style', 'aspectRatio', 'additionalInfo'
+        'taskName', 'placeType', 'layout', 'environment', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_prop_parameters': [
-        'title', 'propName', 'appearance', 'state', 'composition', 'style', 'additionalInfo'
+        'taskName', 'propName', 'appearance', 'state', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_effect_parameters': [
-        'title', 'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'additionalInfo'
+        'taskName', 'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_screenplay_parameters': [
-        'title', 'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'genre', 'style', 'additionalInfo'
+        'taskName', 'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
-        'title', 'scriptSource', 'duration', 'aspectRatio', 'visualStyle', 'cameraStyle', 'additionalInfo'
+        'taskName', 'scriptSource', 'aspectRatio', 'visualStyle', 'additionalInfo'
       ]
     };
 
@@ -1073,6 +1099,29 @@ suite('AI视频创作助手扩展', () => {
       assert.deepStrictEqual(workflow.fields.map((field) => field.name), fieldNames);
       assert.strictEqual(workflow.fields[0].required, true);
       assert.ok(workflow.fields.some((field) => field.name === 'additionalInfo'));
+    }
+
+    const novelWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_novel_parameters');
+    assert.strictEqual(novelWorkflow?.fields.find((field) => field.name === 'target')?.label, '章节形式');
+    assert.ok(novelWorkflow?.fields.find((field) => field.name === 'target')?.description.includes('章节数上限'));
+    assert.deepStrictEqual(novelWorkflow?.fields.find((field) => field.name === 'target')?.options, ['单章', '分章']);
+    assert.strictEqual(novelWorkflow?.fields.find((field) => field.name === 'target')?.allowCustom, undefined);
+
+    const visualAssetWorkflowNames = [
+      'ai-video-creation-tools_collect_character_parameters',
+      'ai-video-creation-tools_collect_scene_parameters',
+      'ai-video-creation-tools_collect_prop_parameters',
+      'ai-video-creation-tools_collect_effect_parameters'
+    ];
+    for (const toolName of visualAssetWorkflowNames) {
+      const workflow = formWorkflows.find((item) => item.toolName === toolName);
+      assert.ok(workflow);
+      const visualFields = workflow.fields.filter((field) =>
+        ['composition', 'style', 'background', 'aspectRatio'].includes(field.name)
+      );
+      assert.deepStrictEqual(visualFields.map((field) => field.label), ['视角与构图', '画面风格', '背景', '画幅比例']);
+      assert.ok(visualFields.every((field) => Boolean(field.options?.length)));
+      assert.ok(visualFields.slice(0, 3).every((field) => field.allowCustom));
     }
 
     const chapterContentWorkflows = formWorkflows.filter((workflow) => workflow.supportsChapterContent);
@@ -1112,6 +1161,15 @@ suite('AI视频创作助手扩展', () => {
       characterWorkflow.fields.find((field) => field.name === 'background')?.options,
       ['纯白背景', '浅灰纯色背景', '纯色背景', '简洁渐变背景', '与角色设定相符的环境背景']
     );
+    const sceneWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_scene_parameters');
+    assert.ok(sceneWorkflow?.fields.find((field) => field.name === 'style')?.options?.includes('建筑可视化'));
+    assert.ok(sceneWorkflow?.fields.find((field) => field.name === 'background')?.options?.includes('完整环境场景'));
+    const propWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_prop_parameters');
+    assert.ok(propWorkflow?.fields.find((field) => field.name === 'background')?.options?.includes('纯白产品背景'));
+    assert.ok(propWorkflow?.fields.find((field) => field.name === 'aspectRatio')?.options?.includes('1:1'));
+    const effectWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_effect_parameters');
+    assert.ok(effectWorkflow?.fields.find((field) => field.name === 'style')?.options?.includes('魔法粒子特效'));
+    assert.ok(effectWorkflow?.fields.find((field) => field.name === 'background')?.options?.includes('透明背景'));
 
     const shootingScriptWorkflow = formWorkflows.find((item) => item.toolName === 'ai-video-creation-tools_collect_shooting_script_parameters');
     assert.ok(shootingScriptWorkflow);
@@ -1119,11 +1177,7 @@ suite('AI视频创作助手扩展', () => {
       shootingScriptWorkflow.fields.find((field) => field.name === 'visualStyle')?.options,
       ['写实电影风格', '写实摄影', '2D动漫插画', '3D动画风格', '游戏概念设计', '水彩插画', '黑白线稿']
     );
-    assert.deepStrictEqual(
-      shootingScriptWorkflow.fields.find((field) => field.name === 'cameraStyle')?.options,
-      ['固定机位（稳定中近景）', '缓慢推近', '缓慢拉远', '横向摇摄', '跟随移动镜头', '手持纪实感', '低机位仰拍', '俯拍全景', '浅景深特写']
-    );
-    assert.strictEqual(shootingScriptWorkflow.fields.find((field) => field.name === 'cameraStyle')?.allowCustom, true);
+    assert.ok(!shootingScriptWorkflow.fields.some((field) => field.name === 'cameraStyle'));
 
     const customizableFields = formWorkflows.flatMap((workflow) => workflow.fields)
       .filter((field) => field.allowCustom);
@@ -1213,7 +1267,9 @@ suite('AI视频创作助手扩展', () => {
         assert.ok(promptContent.includes('不擅自改成分镜、拍摄计划或整套制作材料'));
       }
       if (promptName === 'shooting-script.prompt.md') {
-        assert.ok(promptContent.includes('每个镜头均包含可单独用于视频生成的动态画面提示词'));
+        assert.ok(skillContent.includes('镜头时长合计应与之匹配'));
+        assert.ok(!promptContent.includes('镜头时长遵循素材或剧本'));
+        assert.ok(!promptContent.includes('每个镜头均包含可单独用于视频生成的动态画面提示词'));
         assert.ok(promptContent.includes('完整的中文拍摄脚本和英文拍摄脚本'));
         assert.ok(promptContent.includes('中文正文提交到 `contentZh`，英文正文提交到 `contentEn`'));
       }
@@ -1226,6 +1282,8 @@ suite('AI视频创作助手扩展', () => {
     assert.deepStrictEqual(saveResultContribution.inputSchema.required, ['recordId']);
     assert.strictEqual(saveResultContribution.inputSchema.oneOf.length, 3);
     const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'promptRecordsView.ts'), 'utf8');
+    const recordsPageSource = recordsViewSource.slice(recordsViewSource.indexOf('function createPageHtml('));
+    assert.ok(recordsPageSource.includes("default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';"));
     assert.ok(recordsViewSource.includes("function getResultActionLabel(workflowId)"));
     assert.ok(recordsViewSource.includes("if (screenplayWorkflowIds.includes(workflowId)) return '查看剧本';"));
     assert.ok(recordsViewSource.includes("if (bilingualContentWorkflowIds.includes(workflowId)) return '查看拍摄脚本';"));
@@ -1238,7 +1296,10 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(recordsViewSource.includes("className = 'record-cell row-action-column'"));
     assert.ok(recordsViewSource.includes('#records-table .record-actions { margin-left: -8px; }'));
     assert.ok(recordsViewSource.includes("command: 'view-chapters'"));
-    assert.ok(recordsViewSource.includes('<span role="columnheader">章节</span><span role="columnheader">章节内容</span>'));
+    assert.ok(recordsViewSource.includes('<ol id="chapter-content-list" class="chapter-content-list" aria-label="章节内容列表"></ol>'));
+    assert.ok(recordsViewSource.includes("number.textContent = '第 ' + chapter.chapterNumber + ' 章';"));
+    assert.ok(recordsViewSource.includes('title.textContent = chapter.title;'));
+    assert.ok(recordsViewSource.includes('content.textContent = chapter.content;'));
     assert.ok(recordsViewSource.includes('<span class="chapter-content-action-column">操作</span>'));
     assert.ok(recordsViewSource.includes('<span class="row-action-column">操作</span>'));
     assert.ok(recordsViewSource.includes('<span>创建时间</span><span>操作</span>'));

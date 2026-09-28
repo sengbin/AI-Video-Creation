@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, renameSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 import { GeneratedChapterContent, MAX_GENERATED_CHAPTERS } from './chapterContent';
 
+const DATABASE_SCHEMA_VERSION = 4;
+
 /** 新增一条提示词记录及其项目归属。 */
 export interface NewPromptRecord {
-  readonly title: string;
+  readonly taskName: string;
   readonly categoryId: string;
   readonly categoryName: string;
   /** 项目标识；缺省或 '0' 表示未归属项目。 */
@@ -18,7 +20,7 @@ export interface NewPromptRecord {
 /** 数据库中的完整提示词记录。 */
 export interface PromptRecord {
   readonly id: string;
-  readonly title: string | undefined;
+  readonly taskName: string;
   readonly categoryId: string;
   readonly categoryName: string;
   /** 项目标识；'0' 表示未归属项目。 */
@@ -40,7 +42,7 @@ export type GeneratedOutputReplacement =
 
 /** 修改提示词记录时可更新的字段。 */
 export interface UpdatedPromptRecord {
-  readonly title: string;
+  readonly taskName: string;
   /** 新项目标识；'0' 表示未归属项目。 */
   readonly projectId: string;
   readonly schema: unknown;
@@ -59,7 +61,7 @@ export interface WorkProject {
 /** 可作为剧本创作素材来源的已生成内容任务。 */
 export interface GeneratedContentTask {
   readonly id: string;
-  readonly title: string;
+  readonly taskName: string;
   readonly projectId: string;
 }
 
@@ -71,7 +73,7 @@ export interface NewWorkProject {
 
 interface StoredPromptRecord {
   readonly id: string;
-  readonly title: string | null;
+  readonly task_name: string;
   readonly category_id: string;
   readonly category_name: string;
   readonly project_id: string;
@@ -102,12 +104,8 @@ export class PromptDatabase implements vscode.Disposable {
 
     const databasePath = vscode.Uri.joinPath(storageUri, 'creative-projects.sqlite').fsPath;
     const legacyDatabasePath = vscode.Uri.joinPath(storageUri, 'prompt-records.sqlite').fsPath;
-    if (existsSync(databasePath) && existsSync(legacyDatabasePath)) {
-      throw new Error('项目数据库与旧版记录数据库同时存在，无法安全迁移。');
-    }
-    if (existsSync(legacyDatabasePath)) {
-      renameSync(legacyDatabasePath, databasePath);
-    }
+    resetDatabaseIfOutdated(databasePath);
+    deleteDatabaseFiles(legacyDatabasePath);
     const connection = new DatabaseSync(databasePath);
 
     try {
@@ -115,7 +113,7 @@ export class PromptDatabase implements vscode.Disposable {
       connection.exec(`
         CREATE TABLE IF NOT EXISTS prompt_records (
           id TEXT PRIMARY KEY NOT NULL,
-          title TEXT,
+          task_name TEXT NOT NULL,
           category_id TEXT NOT NULL,
           category_name TEXT NOT NULL,
           project_id TEXT NOT NULL DEFAULT '0',
@@ -129,8 +127,23 @@ export class PromptDatabase implements vscode.Disposable {
         );
         CREATE INDEX IF NOT EXISTS prompt_records_category_created_idx
           ON prompt_records (category_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS generated_chapter_contents (
+          record_id TEXT NOT NULL REFERENCES prompt_records(id) ON DELETE CASCADE,
+          chapter_number INTEGER NOT NULL CHECK (chapter_number BETWEEN 1 AND ${MAX_GENERATED_CHAPTERS}),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (record_id, chapter_number)
+        );
       `);
-      migratePromptRecords(connection);
+      connection.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
     } catch (error) {
       connection.close();
       throw error;
@@ -157,11 +170,11 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.connection.prepare(`
       INSERT INTO prompt_records (
-        id, title, category_id, category_name, project_id, schema_json, data_json, created_at, generated_at
+        id, task_name, category_id, category_name, project_id, schema_json, data_json, created_at, generated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
-      record.title,
+      record.taskName,
       record.categoryId,
       record.categoryName,
       record.projectId,
@@ -224,11 +237,11 @@ export class PromptDatabase implements vscode.Disposable {
     }
     conditions[1] += ')';
     const rows = this.connection.prepare(`
-      SELECT id, title, project_id FROM prompt_records
-      WHERE ${conditions.join(' AND ')} AND project_id <> '0' AND title IS NOT NULL
+      SELECT id, task_name, project_id FROM prompt_records
+      WHERE ${conditions.join(' AND ')} AND project_id <> '0'
       ORDER BY created_at DESC, id DESC
-    `).all(...parameters) as { id: string; title: string; project_id: string }[];
-    return rows.map((row) => ({ id: row.id, title: row.title, projectId: row.project_id }));
+    `).all(...parameters) as { id: string; task_name: string; project_id: string }[];
+    return rows.map((row) => ({ id: row.id, taskName: row.task_name, projectId: row.project_id }));
   }
 
   /**
@@ -244,7 +257,7 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-   * 更新记录标题、字段模板和数据。
+  * 更新任务名称、字段模板和数据。
    * @param id 记录标识。
    * @param input 更新后的记录内容。
    * @returns 更新后的记录；记录不存在时返回 undefined。
@@ -255,9 +268,9 @@ export class PromptDatabase implements vscode.Disposable {
     const dataJson = serializeJson(input.data, 'data');
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET title = ?, project_id = ?, schema_json = ?, data_json = ?
+      SET task_name = ?, project_id = ?, schema_json = ?, data_json = ?
       WHERE id = ?
-    `).run(input.title, input.projectId, schemaJson, dataJson, id);
+    `).run(input.taskName, input.projectId, schemaJson, dataJson, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -619,7 +632,7 @@ function serializeJson(value: unknown, fieldName: string): string {
 function readRecord(row: StoredPromptRecord): PromptRecord {
   return {
     id: row.id,
-    title: row.title ?? undefined,
+    taskName: row.task_name,
     categoryId: row.category_id,
     categoryName: row.category_name,
     projectId: row.project_id,
@@ -633,141 +646,30 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
   };
 }
 
-function migratePromptRecords(connection: DatabaseSync): void {
-  connection.exec('BEGIN');
+function resetDatabaseIfOutdated(databasePath: string): void {
+  if (!existsSync(databasePath)) {
+    return;
+  }
+
+  const connection = new DatabaseSync(databasePath);
+  let schemaVersion: number;
   try {
-    const projectTables = connection.prepare(`
-      SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name IN ('projects', 'collections', 'episodes')
-    `).all() as { name: string }[];
-    const tableNames = new Set(projectTables.map((table) => table.name));
-    if (tableNames.has('episodes') && tableNames.has('collections')) {
-      throw new Error('数据库同时存在旧版项目表和新版项目表，无法安全迁移。');
-    }
-    if (tableNames.has('projects') && (tableNames.has('collections') || tableNames.has('episodes'))) {
-      throw new Error('数据库同时存在旧项目表和新项目表，无法安全迁移。');
-    }
-    if (tableNames.has('episodes')) {
-      connection.exec('ALTER TABLE episodes RENAME TO projects');
-    } else if (tableNames.has('collections')) {
-      connection.exec('ALTER TABLE collections RENAME TO projects');
-    } else if (!tableNames.has('projects')) {
-      connection.exec(`
-        CREATE TABLE projects (
-          id TEXT PRIMARY KEY NOT NULL,
-          name TEXT NOT NULL UNIQUE,
-          description TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-      `);
-    }
+    const result = connection.prepare('PRAGMA user_version').get() as { user_version: number };
+    schemaVersion = result.user_version;
+  } finally {
+    connection.close();
+  }
 
-    const columns = connection.prepare('PRAGMA table_info(prompt_records)').all() as {
-      name: string;
-    }[];
-    const columnNames = new Set(columns.map((column) => column.name));
-    if ((columnNames.has('episode_id') || columnNames.has('collection_id')) && columnNames.has('project_id')) {
-      throw new Error('数据库同时存在旧版项目关联字段和新版项目关联字段，无法安全迁移。');
-    }
-    if (columnNames.has('episode_id')) {
-      connection.exec('ALTER TABLE prompt_records RENAME COLUMN episode_id TO project_id');
-      columnNames.delete('episode_id');
-      columnNames.add('project_id');
-    } else if (columnNames.has('collection_id')) {
-      connection.exec('ALTER TABLE prompt_records RENAME COLUMN collection_id TO project_id');
-      columnNames.delete('collection_id');
-      columnNames.add('project_id');
-    }
-    const legacyResults = columnNames.has('generated_result')
-      ? connection.prepare(`
-        SELECT id, generated_result FROM prompt_records
-        WHERE generated_result IS NOT NULL
-      `).all() as { id: string; generated_result: string }[]
-      : [];
+  if (schemaVersion !== DATABASE_SCHEMA_VERSION) {
+    deleteDatabaseFiles(databasePath);
+  }
+}
 
-    if (!columnNames.has('title')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN title TEXT');
+function deleteDatabaseFiles(databasePath: string): void {
+  for (const filePath of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
     }
-    if (!columnNames.has('generated_at')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_at TEXT');
-    }
-    if (!columnNames.has('project_id')) {
-      connection.exec("ALTER TABLE prompt_records ADD COLUMN project_id TEXT NOT NULL DEFAULT '0'");
-    }
-    if (!columnNames.has('generated_result_chinese')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_chinese TEXT');
-    }
-    if (!columnNames.has('generated_result_english')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_english TEXT');
-    }
-    if (!columnNames.has('generated_result_content')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_content TEXT');
-    }
-
-    connection.exec('DROP TABLE IF EXISTS generated_episode_contents');
-    connection.exec(`
-      CREATE TABLE IF NOT EXISTS generated_chapter_contents (
-        record_id TEXT NOT NULL REFERENCES prompt_records(id) ON DELETE CASCADE,
-        chapter_number INTEGER NOT NULL CHECK (chapter_number BETWEEN 1 AND ${MAX_GENERATED_CHAPTERS}),
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (record_id, chapter_number)
-      )
-    `);
-
-    const updateResult = connection.prepare(`
-      UPDATE prompt_records
-      SET generated_result_chinese = ?, generated_result_english = ?
-      WHERE id = ?
-    `);
-    for (const result of legacyResults) {
-      updateResult.run(result.generated_result, null, result.id);
-    }
-
-    if (columnNames.has('generated_result')) {
-      connection.exec('ALTER TABLE prompt_records DROP COLUMN generated_result');
-    }
-
-    connection.exec(`
-      DROP INDEX IF EXISTS prompt_records_project_task_episode_unique_idx;
-      DROP INDEX IF EXISTS prompt_records_project_episode_unique_idx;
-      DROP INDEX IF EXISTS prompt_records_collection_task_episode_unique_idx;
-      DROP INDEX IF EXISTS prompt_records_collection_episode_unique_idx;
-    `);
-    if (columnNames.has('episode_number')) {
-      connection.exec('ALTER TABLE prompt_records DROP COLUMN episode_number');
-    }
-    const updateCategory = connection.prepare(`
-      UPDATE prompt_records
-      SET category_id = ?, category_name = ?
-      WHERE category_id = ?
-    `);
-    updateCategory.run(
-      'ai-video-creation-tools_collect_creative_writing_parameters',
-      '创意写作',
-      'ai-video-creation-tools_collect_story_parameters'
-    );
-    updateCategory.run(
-      'ai-video-creation-tools_collect_image_inspired_writing_parameters',
-      '图片灵感写作',
-      'ai-video-creation-tools_collect_image_story_parameters'
-    );
-
-    connection.exec('DROP INDEX IF EXISTS prompt_records_category_updated_idx');
-    if (columnNames.has('updated_at')) {
-      connection.exec('ALTER TABLE prompt_records DROP COLUMN updated_at');
-    }
-    connection.exec(`
-      UPDATE prompt_records
-      SET project_id = '0'
-      WHERE project_id IS NULL OR project_id = '';
-    `);
-    connection.exec('COMMIT');
-  } catch (error) {
-    connection.exec('ROLLBACK');
-    throw error;
   }
 }
 
