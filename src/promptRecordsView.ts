@@ -1080,6 +1080,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .episode-content-empty { margin: 0; padding: 20px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     .episode-content-empty[hidden] { display: none; }
     .dialog-resize-handle { position: absolute; z-index: 2; touch-action: none; user-select: none; }
+    [data-resizable="false"] .dialog-resize-handle { display: none; }
     .dialog-resize-horizontal { top: 36px; right: 0; bottom: 10px; width: 7px; cursor: ew-resize; }
     .dialog-resize-vertical { right: 10px; bottom: 0; left: 10px; height: 7px; cursor: ns-resize; }
     .dialog-resize-corner { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
@@ -1141,7 +1142,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         </div>
       </form>
     </section>
-    <dialog id="collection-warning-dialog" aria-labelledby="collection-warning-title">
+    <dialog id="collection-warning-dialog" data-resizable="false" aria-labelledby="collection-warning-title">
       <div class="dialog-header">
         <h2 id="collection-warning-title">删除合集</h2>
         <button class="dialog-close" id="close-collection-warning" type="button" aria-label="关闭" title="关闭">×</button>
@@ -1158,7 +1159,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
       <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
-    <dialog id="delete-dialog" aria-labelledby="delete-dialog-title">
+    <dialog id="delete-dialog" data-resizable="false" aria-labelledby="delete-dialog-title">
       <form id="delete-form">
         <div class="dialog-header">
           <h2 id="delete-dialog-title">确认删除记录</h2>
@@ -1179,7 +1180,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
       <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
-    <dialog id="episode-content-dialog" class="result-dialog" aria-labelledby="episode-content-dialog-title">
+    <dialog id="episode-content-dialog" class="result-dialog" data-resizable="true" aria-labelledby="episode-content-dialog-title">
       <div class="dialog-header">
         <h2 id="episode-content-dialog-title">查看内容</h2>
         <button class="dialog-close" id="close-episode-content" type="button" aria-label="关闭" title="关闭">×</button>
@@ -1195,7 +1196,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
       <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
-    <dialog id="result-dialog" class="result-dialog" aria-labelledby="result-dialog-title">
+    <dialog id="result-dialog" class="result-dialog" data-resizable="true" aria-labelledby="result-dialog-title">
       <div class="dialog-header">
         <h2 id="result-dialog-title">查看结果</h2>
         <button class="dialog-close" id="close-result" type="button" aria-label="关闭" title="关闭">×</button>
@@ -1313,6 +1314,10 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const copyFeedbackTimers = new WeakMap();
 
     document.querySelectorAll('dialog').forEach((dialog) => {
+      setupDialogInteractions(dialog, dialog.dataset.resizable === 'true');
+    });
+
+    function setupDialogInteractions(dialog, resizable) {
       const titlebar = dialog.querySelector('.dialog-header');
       titlebar.addEventListener('pointerdown', (event) => {
         if (event.button !== 0 || event.target.closest('button')) return;
@@ -1348,6 +1353,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         titlebar.addEventListener('pointercancel', finishMove);
         titlebar.addEventListener('lostpointercapture', finishMove);
       });
+
+      if (!resizable) return;
 
       dialog.querySelectorAll('[data-resize]').forEach((handle) => {
         handle.addEventListener('pointerdown', (event) => {
@@ -1387,7 +1394,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           handle.addEventListener('lostpointercapture', finishResize);
         });
       });
-    });
+    }
 
     function makeButton(text, className, label, onClick) {
       const button = document.createElement('button');
