@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, renameSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
-import { GeneratedEpisodeContent, MAX_GENERATED_EPISODES } from './episodeContent';
+import { GeneratedChapterContent, MAX_GENERATED_CHAPTERS } from './chapterContent';
 
 /** 新增一条提示词记录及其项目归属。 */
 export interface NewPromptRecord {
@@ -36,7 +36,7 @@ export interface PromptRecord {
 export type GeneratedOutputReplacement =
   | { readonly type: 'content'; readonly content: string }
   | { readonly type: 'prompts'; readonly contentZh: string; readonly contentEn: string }
-  | { readonly type: 'episodes'; readonly episodes: readonly GeneratedEpisodeContent[] };
+  | { readonly type: 'chapters'; readonly chapters: readonly GeneratedChapterContent[] };
 
 /** 修改提示词记录时可更新的字段。 */
 export interface UpdatedPromptRecord {
@@ -234,6 +234,47 @@ export class PromptDatabase implements vscode.Disposable {
     return this.getRecord(id);
   }
 
+  /** 删除指定工作流中仍保存旧字段签名的冲突记录。 */
+  deleteRecordsWithConflictingFields(categoryIds: readonly string[], fieldNames: readonly string[]): number {
+    if (categoryIds.length === 0 || fieldNames.length === 0) {
+      return 0;
+    }
+
+    const placeholders = categoryIds.map(() => '?').join(', ');
+    const rows = this.connection.prepare(`
+      SELECT id, schema_json, data_json FROM prompt_records
+      WHERE category_id IN (${placeholders})
+    `).all(...categoryIds) as { id: string; schema_json: string; data_json: string }[];
+    const legacyNames = new Set(fieldNames);
+    const conflictingIds = rows.filter((row) => {
+      const data = JSON.parse(row.data_json) as unknown;
+      const schema = JSON.parse(row.schema_json) as unknown;
+      const hasDataField = typeof data === 'object' && data !== null && !Array.isArray(data) &&
+        Object.keys(data).some((name) => legacyNames.has(name));
+      const hasSchemaField = Array.isArray(schema) && schema.some((field) =>
+        typeof field === 'object' && field !== null && !Array.isArray(field) &&
+        'name' in field && typeof field.name === 'string' && legacyNames.has(field.name)
+      );
+      return hasDataField || hasSchemaField;
+    }).map((row) => row.id);
+
+    if (conflictingIds.length === 0) {
+      return 0;
+    }
+
+    const deleteStatement = this.connection.prepare('DELETE FROM prompt_records WHERE id = ?');
+    this.connection.exec('BEGIN');
+    try {
+      conflictingIds.forEach((id) => deleteStatement.run(id));
+      this.connection.exec('COMMIT');
+    } catch (error) {
+      this.connection.exec('ROLLBACK');
+      throw error;
+    }
+    this.recordsChangedEmitter.fire();
+    return conflictingIds.length;
+  }
+
   /**
     * 保存指定记录最近一次生成的中英文提示词。
    * @param id 提示词记录标识。
@@ -281,14 +322,14 @@ export class PromptDatabase implements vscode.Disposable {
 
   /** 在同一事务中清除指定记录的全部旧生成结果并保存本次结果。 */
   replaceGeneratedOutput(id: string, output: GeneratedOutputReplacement): PromptRecord | undefined {
-    const episodes = output.type === 'episodes' ? output.episodes : undefined;
-    if (episodes) {
-      if (episodes.length < 1 || episodes.length > MAX_GENERATED_EPISODES) {
-        throw new Error(`分集数量必须在 1 到 ${MAX_GENERATED_EPISODES} 集之间。`);
+    const chapters = output.type === 'chapters' ? output.chapters : undefined;
+    if (chapters) {
+      if (chapters.length < 1 || chapters.length > MAX_GENERATED_CHAPTERS) {
+        throw new Error(`章节数量必须在 1 到 ${MAX_GENERATED_CHAPTERS} 章之间。`);
       }
-      episodes.forEach((episode, index) => {
-        if (episode.episodeNumber !== index + 1 || !episode.title.trim() || !episode.content.trim()) {
-          throw new Error('每集必须按顺序提供连续集数、标题和正文。');
+      chapters.forEach((chapter, index) => {
+        if (chapter.chapterNumber !== index + 1 || !chapter.title.trim() || !chapter.content.trim()) {
+          throw new Error('每章必须按顺序提供连续章节号、标题和正文。');
         }
       });
     }
@@ -309,14 +350,14 @@ export class PromptDatabase implements vscode.Disposable {
         return undefined;
       }
 
-      this.connection.prepare('DELETE FROM generated_episode_contents WHERE record_id = ?').run(id);
-      if (episodes) {
-        const insertEpisode = this.connection.prepare(`
-          INSERT INTO generated_episode_contents (record_id, episode_number, title, content, created_at)
+      this.connection.prepare('DELETE FROM generated_chapter_contents WHERE record_id = ?').run(id);
+      if (chapters) {
+        const insertChapter = this.connection.prepare(`
+          INSERT INTO generated_chapter_contents (record_id, chapter_number, title, content, created_at)
           VALUES (?, ?, ?, ?, ?)
         `);
-        for (const episode of episodes) {
-          insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), generatedAt);
+        for (const chapter of chapters) {
+          insertChapter.run(id, chapter.chapterNumber, chapter.title.trim(), chapter.content.trim(), generatedAt);
         }
       }
       this.connection.exec('COMMIT');
@@ -329,30 +370,30 @@ export class PromptDatabase implements vscode.Disposable {
     return this.getRecord(id);
   }
 
-  /** 查询指定创作任务已保存的分集内容。 */
-  listGeneratedEpisodeContents(recordId: string): GeneratedEpisodeContent[] {
+  /** 查询指定创作任务已保存的章节内容。 */
+  listGeneratedChapterContents(recordId: string): GeneratedChapterContent[] {
     const rows = this.connection.prepare(`
-      SELECT episode_number, title, content
-      FROM generated_episode_contents
+      SELECT chapter_number, title, content
+      FROM generated_chapter_contents
       WHERE record_id = ?
-      ORDER BY episode_number
-    `).all(recordId) as { episode_number: number; title: string; content: string }[];
+      ORDER BY chapter_number
+    `).all(recordId) as { chapter_number: number; title: string; content: string }[];
 
     return rows.map((row) => ({
-      episodeNumber: row.episode_number,
+      chapterNumber: row.chapter_number,
       title: row.title,
       content: row.content
     }));
   }
 
-  /** 以单个事务替换指定任务的全部分集内容。 */
-  saveGeneratedEpisodeContents(id: string, episodes: readonly GeneratedEpisodeContent[]): boolean {
-    if (episodes.length < 1 || episodes.length > MAX_GENERATED_EPISODES) {
-      throw new Error(`分集数量必须在 1 到 ${MAX_GENERATED_EPISODES} 集之间。`);
+  /** 以单个事务替换指定任务的全部章节内容。 */
+  saveGeneratedChapterContents(id: string, chapters: readonly GeneratedChapterContent[]): boolean {
+    if (chapters.length < 1 || chapters.length > MAX_GENERATED_CHAPTERS) {
+      throw new Error(`章节数量必须在 1 到 ${MAX_GENERATED_CHAPTERS} 章之间。`);
     }
-    episodes.forEach((episode, index) => {
-      if (episode.episodeNumber !== index + 1 || !episode.title.trim() || !episode.content.trim()) {
-        throw new Error('每集必须按顺序提供连续集数、标题和正文。');
+    chapters.forEach((chapter, index) => {
+      if (chapter.chapterNumber !== index + 1 || !chapter.title.trim() || !chapter.content.trim()) {
+        throw new Error('每章必须按顺序提供连续章节号、标题和正文。');
       }
     });
     if (!this.connection.prepare('SELECT 1 FROM prompt_records WHERE id = ?').get(id)) {
@@ -360,15 +401,15 @@ export class PromptDatabase implements vscode.Disposable {
     }
 
     const generatedAt = new Date().toISOString();
-    const insertEpisode = this.connection.prepare(`
-      INSERT INTO generated_episode_contents (record_id, episode_number, title, content, created_at)
+    const insertChapter = this.connection.prepare(`
+      INSERT INTO generated_chapter_contents (record_id, chapter_number, title, content, created_at)
       VALUES (?, ?, ?, ?, ?)
     `);
     this.connection.exec('BEGIN');
     try {
-      this.connection.prepare('DELETE FROM generated_episode_contents WHERE record_id = ?').run(id);
-      for (const episode of episodes) {
-        insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), generatedAt);
+      this.connection.prepare('DELETE FROM generated_chapter_contents WHERE record_id = ?').run(id);
+      for (const chapter of chapters) {
+        insertChapter.run(id, chapter.chapterNumber, chapter.title.trim(), chapter.content.trim(), generatedAt);
       }
       this.connection.prepare('UPDATE prompt_records SET generated_at = ? WHERE id = ?').run(generatedAt, id);
       this.connection.exec('COMMIT');
@@ -631,14 +672,15 @@ function migratePromptRecords(connection: DatabaseSync): void {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_content TEXT');
     }
 
+    connection.exec('DROP TABLE IF EXISTS generated_episode_contents');
     connection.exec(`
-      CREATE TABLE IF NOT EXISTS generated_episode_contents (
+      CREATE TABLE IF NOT EXISTS generated_chapter_contents (
         record_id TEXT NOT NULL REFERENCES prompt_records(id) ON DELETE CASCADE,
-        episode_number INTEGER NOT NULL CHECK (episode_number BETWEEN 1 AND ${MAX_GENERATED_EPISODES}),
+        chapter_number INTEGER NOT NULL CHECK (chapter_number BETWEEN 1 AND ${MAX_GENERATED_CHAPTERS}),
         title TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        PRIMARY KEY (record_id, episode_number)
+        PRIMARY KEY (record_id, chapter_number)
       )
     `);
 

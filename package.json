@@ -123,7 +123,7 @@
       {
         "name": "ai-video-creation-tools_collect_creative_writing_parameters",
         "displayName": "收集创意写作参数",
-        "modelDescription": "在创意写作 Prompt 中调用。打开同屏表单收集记录标题、创作主题或灵感、题材、单集时长、最大总集数、表达风格和输出要求，提交后把用户填写内容返回给模型按集创作多种体裁的文字作品。记录标题、单集时长和最大总集数必填。",
+        "modelDescription": "在创意写作 Prompt 中调用。打开同屏表单收集记录标题、创作主题或灵感、题材、每章字数范围、章节数上限、表达风格和输出要求，提交后把用户填写内容返回给模型按章创作多种体裁的文字作品。记录标题及章节字数和数量约束必填。",
         "userDescription": "打开创意写作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_creative_writing_parameters",
@@ -136,7 +136,7 @@
       {
         "name": "ai-video-creation-tools_collect_image_inspired_writing_parameters",
         "displayName": "收集图片灵感写作参数",
-        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集记录标题、题材或主题、单集时长、最大总集数、画面约束和输出形式。图片由用户作为聊天附件提供，不由此工具收集。记录标题、单集时长和最大总集数必填。",
+        "modelDescription": "在图片灵感写作 Prompt 中调用。打开同屏表单收集记录标题、题材或主题、每章字数范围、章节数上限、画面约束和输出形式。图片由用户作为聊天附件提供，不由此工具收集。记录标题及章节字数和数量约束必填。",
         "userDescription": "打开图片灵感写作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_image_inspired_writing_parameters",
@@ -149,7 +149,7 @@
       {
         "name": "ai-video-creation-tools_collect_novel_parameters",
         "displayName": "收集小说改编参数",
-        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集记录标题、改编目标、单集时长、最大总集数、保留或调整要求和输出要求，提交后结合用户提供的原作按集创作改编内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。记录标题、单集时长和最大总集数必填。",
+        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集记录标题、改编目标、每章字数范围、章节数上限、保留或调整要求和输出要求，提交后结合用户提供的原作按章创作改编内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。记录标题及章节字数和数量约束必填。",
         "userDescription": "打开小说改编参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_novel_parameters",
@@ -240,7 +240,7 @@
       {
         "name": "ai-video-creation-tools_save_generated_result",
         "displayName": "保存创作结果",
-        "modelDescription": "生成结果后调用：创意写作、图片灵感写作和小说重创作按集提交 episodes 数组，每项包含 episodeNumber、title、content，集数不得超过参数中的 maxEpisodes；根据素材判断适合的实际集数，不得为凑满上限扩写。剧本创作提交完整作品正文 content；拍摄脚本制作提交完整中文内容 contentZh 与英文内容 contentEn；角色、场景、道具和特效工作流分别提交完整中文提示词 contentZh 与英文提示词 contentEn。必须使用参数工具结果提供的 recordId，不得猜测或替换。",
+        "modelDescription": "生成结果后调用：创意写作、图片灵感写作和小说重创作按章提交 chapters 数组，每项包含 chapterNumber、title、content，章节数不得超过参数中的 maxChapters；尽量遵循每章字数范围，根据素材判断适合的实际章节数，不得为凑满上限扩写。剧本创作提交完整作品正文 content；拍摄脚本制作提交完整中文内容 contentZh 与英文内容 contentEn；角色、场景、道具和特效工作流分别提交完整中文提示词 contentZh 与英文提示词 contentEn。必须使用参数工具结果提供的 recordId，不得猜测或替换。",
         "userDescription": "保存本次创作或提示词结果",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_save_generated_result",
@@ -249,19 +249,19 @@
           "properties": {
             "recordId": { "type": "string", "description": "参数工具结果中的记录标识" },
             "content": { "type": "string", "description": "作品类工作流生成的完整创作内容" },
-            "episodes": {
+            "chapters": {
               "type": "array",
               "minItems": 1,
               "maxItems": 100,
-              "description": "分集创作结果；实际集数可少于 maxEpisodes，不得为填满上限扩写",
+              "description": "分章创作结果；实际章节数可少于 maxChapters，不得为填满上限扩写",
               "items": {
                 "type": "object",
                 "properties": {
-                  "episodeNumber": { "type": "integer", "minimum": 1, "maximum": 100 },
+                  "chapterNumber": { "type": "integer", "minimum": 1, "maximum": 100 },
                   "title": { "type": "string", "minLength": 1 },
                   "content": { "type": "string", "minLength": 1 }
                 },
-                "required": ["episodeNumber", "title", "content"],
+                "required": ["chapterNumber", "title", "content"],
                 "additionalProperties": false
               }
             },
@@ -271,16 +271,16 @@
           "required": ["recordId"],
           "oneOf": [
             {
-              "required": ["episodes"],
+              "required": ["chapters"],
               "not": { "anyOf": [{ "required": ["content"] }, { "required": ["contentZh"] }, { "required": ["contentEn"] }] }
             },
             {
               "required": ["content"],
-              "not": { "anyOf": [{ "required": ["episodes"] }, { "required": ["contentZh"] }, { "required": ["contentEn"] }] }
+              "not": { "anyOf": [{ "required": ["chapters"] }, { "required": ["contentZh"] }, { "required": ["contentEn"] }] }
             },
             {
               "required": ["contentZh", "contentEn"],
-              "not": { "anyOf": [{ "required": ["content"] }, { "required": ["episodes"] }] }
+              "not": { "anyOf": [{ "required": ["content"] }, { "required": ["chapters"] }] }
             }
           ],
           "additionalProperties": { "not": {} }

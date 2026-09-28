@@ -1,12 +1,18 @@
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
-import { GeneratedEpisodeContent, MAX_GENERATED_EPISODES } from './episodeContent';
+import {
+  countChapterWords,
+  GeneratedChapterContent,
+  MAX_CHAPTER_WORDS,
+  MAX_GENERATED_CHAPTERS,
+  MIN_CHAPTER_WORDS
+} from './chapterContent';
 import { collectFormValues, parseImageAttachments } from './formPanel';
 import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
-  isEpisodeContentWorkflow,
+  isChapterContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
@@ -29,8 +35,8 @@ export interface SaveGeneratedResultInput {
   readonly recordId: string;
   /** 作品类工作流返回的完整创作内容。 */
   readonly content?: string;
-  /** 按集拆分的创作内容。 */
-  readonly episodes?: readonly GeneratedEpisodeContent[];
+  /** 按章拆分的创作内容。 */
+  readonly chapters?: readonly GeneratedChapterContent[];
   /** 提示词类工作流返回的完整中文提示词。 */
   readonly contentZh?: string;
   /** 提示词类工作流返回的完整英文提示词。 */
@@ -208,7 +214,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
     options: vscode.LanguageModelToolInvocationOptions<SaveGeneratedResultInput>,
     _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
-    const { recordId, content, episodes, contentZh, contentEn } = options.input;
+    const { recordId, content, chapters, contentZh, contentEn } = options.input;
     if (typeof recordId !== 'string' || recordId.length === 0) {
       throw new Error('生成结果保存所需的记录标识缺失。');
     }
@@ -220,7 +226,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
 
     let record: ReturnType<PromptDatabase['getRecord']>;
     if (existingRecord.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME) {
-      if (content !== undefined || episodes !== undefined) {
+      if (content !== undefined || chapters !== undefined) {
         throw new Error('拍摄脚本必须提交中英文内容，不接受单篇创作内容。');
       }
       if (typeof contentZh !== 'string' || contentZh.trim().length === 0) {
@@ -234,21 +240,28 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
         contentZh,
         contentEn
       });
-    } else if (isEpisodeContentWorkflow(existingRecord.categoryId)) {
+    } else if (isChapterContentWorkflow(existingRecord.categoryId)) {
       if (content !== undefined || contentZh !== undefined || contentEn !== undefined ||
-          !isGeneratedEpisodeContentArray(episodes)) {
-        throw new Error('该工作流必须提交按集拆分的内容。');
+          !isGeneratedChapterContentArray(chapters)) {
+        throw new Error('该工作流必须提交按章拆分的内容。');
       }
-      const maxEpisodes = getConfiguredMaxEpisodes(existingRecord.data);
-      if (episodes.length > maxEpisodes) {
-        throw new Error(`返回集数不能超过表单设定的 ${maxEpisodes} 集。`);
+      const maxChapters = getConfiguredMaxChapters(existingRecord.data);
+      if (chapters.length > maxChapters) {
+        throw new Error(`返回章节数不能超过表单设定的 ${maxChapters} 章。`);
       }
-      record = this.database.replaceGeneratedOutput(recordId, { type: 'episodes', episodes });
+      const wordRange = getConfiguredChapterWordRange(existingRecord.data);
+      chapters.forEach((chapter) => {
+        const wordCount = countChapterWords(chapter.content);
+        if (wordCount < wordRange.min || wordCount > wordRange.max) {
+          throw new Error(`第 ${chapter.chapterNumber} 章正文统计为 ${wordCount} 字，必须在 ${wordRange.min} 到 ${wordRange.max} 字之间。`);
+        }
+      });
+      record = this.database.replaceGeneratedOutput(recordId, { type: 'chapters', chapters });
     } else if (getWorkflowResultType(existingRecord.categoryId) === 'content') {
       if (typeof content !== 'string' || content.trim().length === 0) {
         throw new Error('创作内容不能为空。');
       }
-      if (episodes !== undefined || contentZh !== undefined || contentEn !== undefined) {
+      if (chapters !== undefined || contentZh !== undefined || contentEn !== undefined) {
         throw new Error('该工作流只能提交单篇创作内容。');
       }
       record = this.database.replaceGeneratedOutput(recordId, { type: 'content', content });
@@ -259,7 +272,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (typeof contentEn !== 'string' || contentEn.trim().length === 0) {
         throw new Error('英文提示词不能为空。');
       }
-      if (content !== undefined || episodes !== undefined) {
+      if (content !== undefined || chapters !== undefined) {
         throw new Error('该工作流必须提交中英文提示词，不接受单篇创作内容。');
       }
       record = this.database.replaceGeneratedOutput(recordId, {
@@ -283,28 +296,50 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
   }
 }
 
-function isGeneratedEpisodeContentArray(value: unknown): value is readonly GeneratedEpisodeContent[] {
-  return Array.isArray(value) && value.every((episode) =>
-    typeof episode === 'object' && episode !== null && !Array.isArray(episode) &&
-    Object.keys(episode).length === 3 &&
-    'episodeNumber' in episode && Number.isSafeInteger(episode.episodeNumber) &&
-    'title' in episode && typeof episode.title === 'string' &&
-    'content' in episode && typeof episode.content === 'string'
+function isGeneratedChapterContentArray(value: unknown): value is readonly GeneratedChapterContent[] {
+  return Array.isArray(value) && value.every((chapter) =>
+    typeof chapter === 'object' && chapter !== null && !Array.isArray(chapter) &&
+    Object.keys(chapter).length === 3 &&
+    'chapterNumber' in chapter && Number.isSafeInteger(chapter.chapterNumber) &&
+    'title' in chapter && typeof chapter.title === 'string' &&
+    'content' in chapter && typeof chapter.content === 'string'
   );
 }
 
-function getConfiguredMaxEpisodes(value: unknown): number {
-  if (typeof value !== 'object' || value === null || Array.isArray(value) || !('maxEpisodes' in value)) {
-    throw new Error('记录中缺少最大总集数设置。');
+function getConfiguredMaxChapters(value: unknown): number {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || !('maxChapters' in value)) {
+    throw new Error('记录中缺少章节数上限设置。');
   }
-  const configuredValue = value.maxEpisodes;
-  const maxEpisodes = typeof configuredValue === 'number'
+  const configuredValue = value.maxChapters;
+  const maxChapters = typeof configuredValue === 'number'
     ? configuredValue
     : typeof configuredValue === 'string' && /^[0-9]+$/.test(configuredValue)
       ? Number(configuredValue)
       : Number.NaN;
-  if (!Number.isSafeInteger(maxEpisodes) || maxEpisodes < 1 || maxEpisodes > MAX_GENERATED_EPISODES) {
-    throw new Error(`最大总集数必须是 1 到 ${MAX_GENERATED_EPISODES} 之间的整数。`);
+  if (!Number.isSafeInteger(maxChapters) || maxChapters < 1 || maxChapters > MAX_GENERATED_CHAPTERS) {
+    throw new Error(`章节数上限必须是 1 到 ${MAX_GENERATED_CHAPTERS} 之间的整数。`);
   }
-  return maxEpisodes;
+  return maxChapters;
+}
+
+function getConfiguredChapterWordRange(value: unknown): { min: number; max: number } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) ||
+      !('chapterMinWords' in value) || !('chapterMaxWords' in value)) {
+    throw new Error('记录中缺少每章字数范围设置。');
+  }
+  const min = typeof value.chapterMinWords === 'number'
+    ? value.chapterMinWords
+    : typeof value.chapterMinWords === 'string' && /^[0-9]+$/.test(value.chapterMinWords)
+      ? Number(value.chapterMinWords)
+      : Number.NaN;
+  const max = typeof value.chapterMaxWords === 'number'
+    ? value.chapterMaxWords
+    : typeof value.chapterMaxWords === 'string' && /^[0-9]+$/.test(value.chapterMaxWords)
+      ? Number(value.chapterMaxWords)
+      : Number.NaN;
+  if (!Number.isSafeInteger(min) || min < MIN_CHAPTER_WORDS || min > MAX_CHAPTER_WORDS ||
+      !Number.isSafeInteger(max) || max < MIN_CHAPTER_WORDS || max > MAX_CHAPTER_WORDS || min >= max) {
+    throw new Error(`每章字数范围必须在 ${MIN_CHAPTER_WORDS} 到 ${MAX_CHAPTER_WORDS} 之间，且上限大于下限。`);
+  }
+  return { min, max };
 }

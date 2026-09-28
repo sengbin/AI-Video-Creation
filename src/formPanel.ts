@@ -188,12 +188,15 @@ export function validateWorkflowFormValues(value: unknown, workflow: FormWorkflo
       (field.min !== undefined && numericValue < field.min) ||
       (field.max !== undefined && numericValue > field.max);
   });
+  const invalidChapterWordRange = workflow.supportsChapterContent === true &&
+    Number(value.chapterMinWords) >= Number(value.chapterMaxWords);
   const actualNames = Object.keys(value);
   if (actualNames.length !== expectedNames.length ||
       expectedNames.some((name) => typeof value[name] !== 'string') ||
       actualNames.some((name) => !expectedNames.includes(name)) ||
       fields.some((field) => field.required && !(value[field.name] as string).trim()) ||
       invalidNumberField ||
+      invalidChapterWordRange ||
       fields.some((field) => field.options && !field.allowCustom && value[field.name] !== '' && !field.options.includes(value[field.name] as string)) ||
       fields.some((field) => field.allowCustom && value[field.name] === CUSTOM_OPTION_VALUE)) {
     return undefined;
@@ -233,7 +236,7 @@ function createFormHtml(
       </section>`
     : '';
   const fields = workflow.fields.map((field) =>
-    renderField(field, initialValues[field.name] ?? '')
+    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '')
   ).join('');
   const projectField = renderWorkProjectField(projects, initialValues.projectId ?? '0');
   const runButton = workflow.showRunButton === false
@@ -797,7 +800,9 @@ export function renderAddRecordFields(
     <div class="field-heading"><label for="add-record-project">所属项目</label></div>
     <select id="add-record-project" name="projectId">${projectOptions}</select>
   </div>`;
-  const fields = workflow.fields.map((field) => renderField(field, initialValues[field.name] ?? '')).join('');
+  const fields = workflow.fields.map((field) =>
+    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '')
+  ).join('');
   const imageField = workflow.supportsImageAttachments
     ? `<section class="add-image-area" aria-label="图片附件">
         <h3>图片附件</h3>

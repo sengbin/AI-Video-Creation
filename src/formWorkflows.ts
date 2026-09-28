@@ -1,10 +1,11 @@
-import { MAX_GENERATED_EPISODES } from './episodeContent';
+import { MAX_GENERATED_CHAPTERS, MAX_CHAPTER_WORDS, MIN_CHAPTER_WORDS } from './chapterContent';
 
 export interface FormField {
   readonly name: string;
   readonly label: string;
   readonly description: string;
   readonly placeholder?: string;
+  readonly defaultValue?: string;
   readonly inputType?: 'number';
   readonly min?: number;
   readonly max?: number;
@@ -24,8 +25,8 @@ export interface FormWorkflow {
   readonly showRunButton?: boolean;
   /** 参数表单是否接受用户附加图片。 */
   readonly supportsImageAttachments?: boolean;
-  /** 是否以独立分集内容返回生成结果。 */
-  readonly supportsEpisodeContent?: boolean;
+  /** 是否以独立章节内容返回生成结果。 */
+  readonly supportsChapterContent?: boolean;
 }
 
 export type WorkflowResultType = 'content' | 'prompt';
@@ -116,14 +117,15 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '创意写作',
     promptPath: 'copilot-customizations/prompts/creative-writing.prompt.md',
     resultType: 'content',
-    supportsEpisodeContent: true,
+    supportsChapterContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'idea', label: '创作主题或灵感', description: '填写创作主题、核心创意或灵感', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
       { name: 'genre', label: '题材', description: '例如悬疑、爱情、科幻', placeholder: '例如：悬疑科幻' },
-      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
-      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据素材判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
+      { name: 'chapterMinWords', label: '每章最少字数', description: '最低允许 200 字；常规叙事推荐设为 1000 字', placeholder: '例如：1000', defaultValue: '200', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'chapterMaxWords', label: '每章最多字数', description: '填写每章正文的字数上限，必须大于最少字数', placeholder: '例如：2500', defaultValue: '2500', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'maxChapters', label: '章节数上限', description: 'Copilot 会根据素材判断实际章节数，不会为达到上限而扩写', placeholder: '例如：20', defaultValue: '20', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
       { name: 'style', label: '表达风格', description: '填写期望的作品风格', placeholder: '例如：简洁克制、富有画面感，结尾留有余味' },
       { name: 'additionalInfo', label: '补充要求', description: '填写主题、人物、结构、结尾、内容边界或交付格式等要求', placeholder: '例如：主题是信任与放下；先输出创作大纲，避免血腥内容' }
     ]
@@ -133,14 +135,15 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '图片灵感写作',
     promptPath: 'copilot-customizations/prompts/image-inspired-writing.prompt.md',
     resultType: 'content',
-    supportsEpisodeContent: true,
+    supportsChapterContent: true,
     supportsImageAttachments: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据图片和已填写内容继续。保存并运行时至少添加一张图片。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'genre', label: '题材或主题', description: '例如悬疑、奇幻、现实题材', placeholder: '例如：带有奇幻元素的悬疑作品' },
-      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
-      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据素材判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
+      { name: 'chapterMinWords', label: '每章最少字数', description: '最低允许 200 字；常规叙事推荐设为 1000 字', placeholder: '例如：1000', defaultValue: '200', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'chapterMaxWords', label: '每章最多字数', description: '填写每章正文的字数上限，必须大于最少字数', placeholder: '例如：2500', defaultValue: '2500', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'maxChapters', label: '章节数上限', description: 'Copilot 会根据素材判断实际章节数，不会为达到上限而扩写', placeholder: '例如：20', defaultValue: '20', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
       { name: 'visualElements', label: '图片中必须保留的元素', description: '填写必须保留的人物、物件、环境或构图', placeholder: '例如：保留红色雨伞、石阶和远处的灯塔' },
       { name: 'additionalInfo', label: '补充要求', description: '填写人物、情绪、结构、结尾、多图顺序或交付格式等要求', placeholder: '例如：按上传顺序展开内容，输出文章提纲，结尾保持开放' }
     ]
@@ -150,13 +153,14 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '小说重创作',
     promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     resultType: 'content',
-    supportsEpisodeContent: true,
+    supportsChapterContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据原作和已填写内容继续。请在 Copilot 聊天中粘贴或附上原作。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'target', label: '改编目标', description: '例如短片、短剧、分集剧本', placeholder: '例如：改编为8集竖屏短剧' },
-      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
-      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据原作内容判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
+      { name: 'chapterMinWords', label: '每章最少字数', description: '最低允许 200 字；常规叙事推荐设为 1000 字', placeholder: '例如：1000', defaultValue: '200', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'chapterMaxWords', label: '每章最多字数', description: '填写每章正文的字数上限，必须大于最少字数', placeholder: '例如：2500', defaultValue: '2500', inputType: 'number', min: MIN_CHAPTER_WORDS, max: MAX_CHAPTER_WORDS, required: true },
+      { name: 'maxChapters', label: '章节数上限', description: 'Copilot 会根据原作内容判断实际章节数，不会为达到上限而扩写', placeholder: '例如：20', defaultValue: '20', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
       { name: 'preserve', label: '必须保留的内容', description: '列出必须保留的人物、情节或设定', placeholder: '例如：保留主角身份、核心谜题和原作结局' },
       { name: 'adjustments', label: '允许调整的内容', description: '说明允许删改、合并或重构的部分', placeholder: '例如：可合并支线人物，压缩中段调查过程' },
       { name: 'additionalInfo', label: '补充要求', description: '填写改编风格、题材、结局或交付格式等其他要求', placeholder: '例如：保留原作冷峻基调，先输出逐集大纲' }
@@ -236,9 +240,14 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '剧本创作',
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
-    notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作灵感或原作也可以粘贴到聊天或作为附件提供。',
+    notice: '作品名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作灵感或原作也可以粘贴到聊天或作为附件提供。',
     fields: [
-      RECORD_TITLE_FIELD,
+      {
+        ...RECORD_TITLE_FIELD,
+        label: '作品名称',
+        description: '必填，填写短片、电影或电视剧的片名',
+        placeholder: '输入作品名称'
+      },
       { name: 'sourceMaterial', label: '创作灵感或原作材料', description: '填写创意、梗概或改编依据；长篇材料可附加到聊天', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
       { name: 'format', label: '剧本形态', description: '填写短片、短剧单集、分集剧本等', placeholder: '例如：10分钟悬疑短片剧本' },
       { name: 'genre', label: '题材类型', description: '填写剧本题材', placeholder: '例如：悬疑科幻' },
@@ -274,9 +283,9 @@ export function getWorkflowResultType(workflowName: string): WorkflowResultType 
   return workflow.resultType;
 }
 
-/** 判断工作流是否要求按集提交创作结果。 */
-export function isEpisodeContentWorkflow(workflowName: string): boolean {
+/** 判断工作流是否要求按章提交创作结果。 */
+export function isChapterContentWorkflow(workflowName: string): boolean {
   return formWorkflows.some((workflow) =>
-    workflow.toolName === workflowName && workflow.supportsEpisodeContent === true
+    workflow.toolName === workflowName && workflow.supportsChapterContent === true
   );
 }

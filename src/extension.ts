@@ -28,6 +28,10 @@ export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
+  database.deleteRecordsWithConflictingFields(
+    formWorkflows.filter((workflow) => workflow.supportsChapterContent === true).map((workflow) => workflow.toolName),
+    ['episodeDurationSeconds', 'maxEpisodes']
+  );
   const submissions = new WorkflowSubmissionStore();
   const recordsView = new PromptRecordsViewProvider(
     database,
