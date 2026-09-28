@@ -6,7 +6,11 @@ import * as vscode from 'vscode';
 import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase } from '../../database';
-import { parseImageAttachments } from '../../formPanel';
+import {
+  parseImageAttachments,
+  renderAddRecordFields,
+  validateWorkflowFormValues
+} from '../../formPanel';
 import {
   formWorkflows,
   CREATIVE_WRITING_WORKFLOW_NAME,
@@ -22,6 +26,54 @@ import {
 } from '../../workflowFormTool';
 
 suite('AI视频创作助手扩展', () => {
+  test('列表添加对话框渲染任务字段并复用工作流校验', () => {
+    const workflow = formWorkflows.find((item) => item.toolName === CREATIVE_WRITING_WORKFLOW_NAME);
+    const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
+    assert.ok(workflow);
+    assert.ok(imageWorkflow);
+
+    const project = {
+      id: 'project-id',
+      name: '<项目>',
+      description: '',
+      createdAt: '',
+      updatedAt: ''
+    };
+    const html = renderAddRecordFields(workflow, [project]);
+    assert.ok(html.includes('name="projectId"'));
+    assert.ok(html.includes('&lt;项目&gt;'));
+    assert.ok(html.includes('name="title"'));
+    assert.ok(html.includes('name="maxEpisodes"'));
+
+    const editHtml = renderAddRecordFields(workflow, [project], {
+      title: '预填任务',
+      idea: '已保存的灵感',
+      projectId: project.id
+    });
+    assert.ok(editHtml.includes('<option value="project-id" selected>&lt;项目&gt;</option>'));
+    assert.ok(editHtml.includes('>预填任务</textarea>'));
+    assert.ok(editHtml.includes('>已保存的灵感</textarea>'));
+
+    const values = Object.fromEntries(workflow.fields.map((field) => [
+      field.name,
+      field.name === 'title' ? '列表新增任务' : field.required ? '1' : ''
+    ]));
+    assert.deepStrictEqual(validateWorkflowFormValues(values, workflow), values);
+    assert.strictEqual(
+      validateWorkflowFormValues({ ...values, title: '' }, workflow),
+      undefined
+    );
+
+    const imageHtml = renderAddRecordFields(imageWorkflow, []);
+    assert.ok(imageHtml.includes('id="add-image-file-input"'));
+    assert.ok(imageHtml.includes(`name="${IMAGE_ATTACHMENTS_FIELD}"`));
+    const imageEditHtml = renderAddRecordFields(imageWorkflow, [], {
+      title: '保留图片的记录',
+      [IMAGE_ATTACHMENTS_FIELD]: '[{"mimeType":"image/png","data":"aGVsbG8="}]'
+    });
+    assert.ok(imageEditHtml.includes('value="[{&quot;mimeType&quot;:&quot;image/png&quot;,&quot;data&quot;:&quot;aGVsbG8=&quot;}]"'));
+  });
+
   test('首次打开时创建用户级数据库并保存动态模板记录', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-db-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');
@@ -503,6 +555,10 @@ suite('AI视频创作助手扩展', () => {
     const cancellationSource = new vscode.CancellationTokenSource();
 
     try {
+      database.updateGeneratedContent(record.id, '上次生成的单篇正文');
+      database.saveGeneratedEpisodeContents(record.id, [
+        { episodeNumber: 1, title: '旧分集', content: '上次生成的分集正文' }
+      ]);
       await tool.invoke({
         input: {
           recordId: record.id,
@@ -513,6 +569,8 @@ suite('AI视频创作助手扩展', () => {
       }, cancellationSource.token);
       assert.strictEqual(database.getRecord(record.id)?.generatedResultChinese, 'Copilot 返回的中文提示词');
       assert.strictEqual(database.getRecord(record.id)?.generatedResultEnglish, 'Copilot returned the English prompt');
+      assert.strictEqual(database.getRecord(record.id)?.generatedResultContent, undefined);
+      assert.deepStrictEqual(database.listGeneratedEpisodeContents(record.id), []);
       await assert.rejects(
         tool.invoke({
           input: {
@@ -545,6 +603,11 @@ suite('AI视频创作助手扩展', () => {
     const cancellationSource = new vscode.CancellationTokenSource();
 
     try {
+      database.updateGeneratedContent(record.id, '上次生成的单篇正文');
+      database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
+      database.saveGeneratedEpisodeContents(record.id, [
+        { episodeNumber: 1, title: '旧分集', content: '上次生成的分集正文' }
+      ]);
       await assert.rejects(
         tool.invoke({
           input: {
@@ -559,6 +622,12 @@ suite('AI视频创作助手扩展', () => {
         }, cancellationSource.token),
         /不能超过表单设定的 2 集/
       );
+      assert.strictEqual(database.getRecord(record.id)?.generatedResultContent, '上次生成的单篇正文');
+      assert.strictEqual(database.getRecord(record.id)?.generatedResultChinese, '上次中文提示词');
+      assert.strictEqual(database.getRecord(record.id)?.generatedResultEnglish, 'Previous English prompt');
+      assert.deepStrictEqual(database.listGeneratedEpisodeContents(record.id), [
+        { episodeNumber: 1, title: '旧分集', content: '上次生成的分集正文' }
+      ]);
       const generatedEpisodes = [
         { episodeNumber: 1, title: '灯塔来信', content: '雨夜里，旧照片上的灯塔亮了起来。' },
         { episodeNumber: 2, title: '潮汐之后', content: '天亮后，照片背面浮现出新的日期。' }
@@ -618,6 +687,10 @@ suite('AI视频创作助手扩展', () => {
           schema: [],
           data: { title: workflow.title }
         });
+        database.updateGeneratedResult(record.id, '上次中文提示词', 'Previous English prompt');
+        database.saveGeneratedEpisodeContents(record.id, [
+          { episodeNumber: 1, title: '旧分集', content: '上次生成的分集正文' }
+        ]);
         const generatedContent = `${workflow.title}的完整作品内容`;
         await tool.invoke({
           input: { recordId: record.id, content: generatedContent },
@@ -628,6 +701,7 @@ suite('AI视频创作助手扩展', () => {
         assert.strictEqual(savedRecord?.generatedResultContent, generatedContent);
         assert.strictEqual(savedRecord?.generatedResultChinese, undefined);
         assert.strictEqual(savedRecord?.generatedResultEnglish, undefined);
+        assert.deepStrictEqual(database.listGeneratedEpisodeContents(record.id), []);
       }
     } finally {
       cancellationSource.dispose();
@@ -990,9 +1064,18 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(recordsViewSource.includes("if (screenplayWorkflowIds.includes(workflowId)) return '查看剧本';"));
     assert.ok(recordsViewSource.includes("if (bilingualContentWorkflowIds.includes(workflowId)) return '查看拍摄脚本';"));
     assert.ok(recordsViewSource.includes("if (episodeContentWorkflowIds.includes(workflowId) || contentWorkflowIds.includes(workflowId)) return '查看内容';"));
+    assert.ok(recordsViewSource.includes('id="run-confirm-dialog"'));
+    assert.ok(recordsViewSource.includes('inputmode="numeric" pattern="[0-9]{4}" maxlength="4"'));
+    assert.ok(recordsViewSource.includes('const requiresCode = Boolean(record.generatedAt);'));
+    assert.ok(recordsViewSource.includes("String(values[0] % 10000).padStart(4, '0')"));
+    assert.ok(recordsViewSource.includes("command: 'run-record', recordId"));
+    assert.ok(recordsViewSource.includes("className = 'record-cell row-action-column'"));
+    assert.ok(recordsViewSource.includes('#records-table .record-actions { margin-left: -8px; }'));
     assert.ok(recordsViewSource.includes("command: 'view-episodes'"));
     assert.ok(recordsViewSource.includes('<span role="columnheader">集数</span><span role="columnheader">分集内容</span>'));
     assert.ok(recordsViewSource.includes('<span class="episode-content-action-column">操作</span>'));
+    assert.ok(recordsViewSource.includes('<span class="row-action-column">操作</span>'));
+    assert.ok(recordsViewSource.includes('<span>创建时间</span><span>操作</span>'));
     assert.ok(recordsViewSource.includes('id="generated-content" aria-label="Copilot 生成的内容："'));
     assert.ok(recordsViewSource.includes("'bilingual-content'"));
     assert.ok(recordsViewSource.includes("isScreenplay ? 'Copilot 生成的剧本内容' : 'Copilot 生成的内容'"));

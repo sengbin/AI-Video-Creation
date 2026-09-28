@@ -229,7 +229,11 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (typeof contentEn !== 'string' || contentEn.trim().length === 0) {
         throw new Error('拍摄脚本英文内容不能为空。');
       }
-      record = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
+      record = this.database.replaceGeneratedOutput(recordId, {
+        type: 'prompts',
+        contentZh,
+        contentEn
+      });
     } else if (isEpisodeContentWorkflow(existingRecord.categoryId)) {
       if (content !== undefined || contentZh !== undefined || contentEn !== undefined ||
           !isGeneratedEpisodeContentArray(episodes)) {
@@ -239,10 +243,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (episodes.length > maxEpisodes) {
         throw new Error(`返回集数不能超过表单设定的 ${maxEpisodes} 集。`);
       }
-      if (!this.database.saveGeneratedEpisodeContents(recordId, episodes)) {
-        throw new Error('要保存生成结果的提示词记录不存在。');
-      }
-      record = this.database.getRecord(recordId);
+      record = this.database.replaceGeneratedOutput(recordId, { type: 'episodes', episodes });
     } else if (getWorkflowResultType(existingRecord.categoryId) === 'content') {
       if (typeof content !== 'string' || content.trim().length === 0) {
         throw new Error('创作内容不能为空。');
@@ -250,7 +251,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (episodes !== undefined || contentZh !== undefined || contentEn !== undefined) {
         throw new Error('该工作流只能提交单篇创作内容。');
       }
-      record = this.database.updateGeneratedContent(recordId, content);
+      record = this.database.replaceGeneratedOutput(recordId, { type: 'content', content });
     } else {
       if (typeof contentZh !== 'string' || contentZh.trim().length === 0) {
         throw new Error('中文提示词不能为空。');
@@ -261,7 +262,11 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (content !== undefined || episodes !== undefined) {
         throw new Error('该工作流必须提交中英文提示词，不接受单篇创作内容。');
       }
-      record = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
+      record = this.database.replaceGeneratedOutput(recordId, {
+        type: 'prompts',
+        contentZh,
+        contentEn
+      });
     }
 
     if (!record) {

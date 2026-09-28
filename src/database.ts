@@ -32,6 +32,12 @@ export interface PromptRecord {
   readonly generatedAt: string | undefined;
 }
 
+/** 成功生成后要保存的唯一结果类型。 */
+export type GeneratedOutputReplacement =
+  | { readonly type: 'content'; readonly content: string }
+  | { readonly type: 'prompts'; readonly contentZh: string; readonly contentEn: string }
+  | { readonly type: 'episodes'; readonly episodes: readonly GeneratedEpisodeContent[] };
+
 /** 修改提示词记录时可更新的字段。 */
 export interface UpdatedPromptRecord {
   readonly title: string;
@@ -267,6 +273,56 @@ export class PromptDatabase implements vscode.Disposable {
 
     if (Number(result.changes) === 0) {
       return undefined;
+    }
+
+    this.recordsChangedEmitter.fire();
+    return this.getRecord(id);
+  }
+
+  /** 在同一事务中清除指定记录的全部旧生成结果并保存本次结果。 */
+  replaceGeneratedOutput(id: string, output: GeneratedOutputReplacement): PromptRecord | undefined {
+    const episodes = output.type === 'episodes' ? output.episodes : undefined;
+    if (episodes) {
+      if (episodes.length < 1 || episodes.length > MAX_GENERATED_EPISODES) {
+        throw new Error(`分集数量必须在 1 到 ${MAX_GENERATED_EPISODES} 集之间。`);
+      }
+      episodes.forEach((episode, index) => {
+        if (episode.episodeNumber !== index + 1 || !episode.title.trim() || !episode.content.trim()) {
+          throw new Error('每集必须按顺序提供连续集数、标题和正文。');
+        }
+      });
+    }
+
+    const generatedAt = new Date().toISOString();
+    const contentZh = output.type === 'prompts' ? output.contentZh : null;
+    const contentEn = output.type === 'prompts' ? output.contentEn : null;
+    const content = output.type === 'content' ? output.content : null;
+    this.connection.exec('BEGIN');
+    try {
+      const result = this.connection.prepare(`
+        UPDATE prompt_records
+        SET generated_result_chinese = ?, generated_result_english = ?, generated_result_content = ?, generated_at = ?
+        WHERE id = ?
+      `).run(contentZh, contentEn, content, generatedAt, id);
+      if (Number(result.changes) === 0) {
+        this.connection.exec('ROLLBACK');
+        return undefined;
+      }
+
+      this.connection.prepare('DELETE FROM generated_episode_contents WHERE record_id = ?').run(id);
+      if (episodes) {
+        const insertEpisode = this.connection.prepare(`
+          INSERT INTO generated_episode_contents (record_id, episode_number, title, content, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const episode of episodes) {
+          insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), generatedAt);
+        }
+      }
+      this.connection.exec('COMMIT');
+    } catch (error) {
+      this.connection.exec('ROLLBACK');
+      throw error;
     }
 
     this.recordsChangedEmitter.fire();

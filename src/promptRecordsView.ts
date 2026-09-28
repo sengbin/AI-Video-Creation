@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { WorkProject, PromptDatabase, PromptRecord } from './database';
-import { collectFormValues, FormSubmission } from './formPanel';
+import {
+  renderAddRecordFields,
+  validateWorkflowFormValues
+} from './formPanel';
 import { GeneratedEpisodeContent } from './episodeContent';
 import {
   FormField,
@@ -17,27 +20,36 @@ interface ViewMessage {
   readonly command: string;
   readonly categoryId?: string;
   readonly recordId?: string;
+  readonly mode?: string;
   readonly confirmationTitle?: string;
   readonly projectId?: string;
   readonly projectName?: string;
   readonly projectDescription?: string;
+  readonly values?: unknown;
   readonly content?: string;
   readonly contentZh?: string;
   readonly contentEn?: string;
 }
 
+interface RecordsPanelSession {
+  readonly key: string;
+  readonly panel: vscode.WebviewPanel;
+  readonly subscriptions: vscode.Disposable[];
+  categoryId: string | undefined;
+  viewMode: 'records' | 'projects';
+  projectFilter: string;
+  ready: boolean;
+  pendingAddRecordCategoryId: string | undefined;
+  pendingProjectDialog: 'create' | undefined;
+}
+
 /** Provides an editor-area page for managing saved prompt records. */
 export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
-  private panel: vscode.WebviewPanel | undefined;
+  private readonly panels = new Map<string, RecordsPanelSession>();
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
-  private selectedWorkProjectFilter = 'all';
-  private viewMode: 'records' | 'projects' | 'create-project' | 'edit-project' = 'records';
-  private editingWorkProjectId: string | undefined;
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
-  private panelSubscriptions: vscode.Disposable[] = [];
-  private readonly activeRecordForms = new Set<string>();
   private readonly databaseSubscription: vscode.Disposable;
 
   /**
@@ -59,62 +71,74 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   resolveWebviewView(view: vscode.WebviewView): void {
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     this.categoryView = view.webview;
-    view.webview.html = createCategoryHtml();
     this.categoryMessageSubscription = view.webview.onDidReceiveMessage((message: unknown) => {
       void this.handleCategoryMessage(message).catch((error: unknown) => {
         void vscode.window.showErrorMessage(errorMessage(error));
       });
     });
+    view.webview.html = createCategoryHtml();
     this.visibilitySubscription = view.onDidChangeVisibility(() => {
       this.postState();
     });
   }
 
-  open(): void {
-    if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.One);
-      return;
+  private open(categoryId: string | undefined, viewMode: 'records' | 'projects'): RecordsPanelSession {
+    const key = categoryId ?? '__projects__';
+    const existing = this.panels.get(key);
+    if (existing) {
+      existing.panel.reveal(vscode.ViewColumn.One);
+      return existing;
     }
 
-    const selectedCategoryTitle = this.viewMode === 'projects' ? '项目管理'
-      : this.viewMode === 'create-project' ? '创建项目'
-        : this.viewMode === 'edit-project' ? '编辑项目'
-          : this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId)?.title ?? '请选择任务';
+    const selectedCategoryTitle = viewMode === 'projects' ? '项目管理'
+      : this.workflows.find((workflow) => workflow.toolName === categoryId)?.title ?? '请选择任务';
     const panel = vscode.window.createWebviewPanel(
       'aiVideoCreation.promptRecordsEditor',
       selectedCategoryTitle,
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] }
     );
-    this.panel = panel;
-    panel.webview.html = createPageHtml(this.workflows);
-    this.panelSubscriptions = [
+    const session: RecordsPanelSession = {
+      key,
+      panel,
+      subscriptions: [],
+      categoryId,
+      viewMode,
+      projectFilter: 'all',
+      ready: false,
+      pendingAddRecordCategoryId: undefined,
+      pendingProjectDialog: undefined
+    };
+    this.panels.set(key, session);
+    session.subscriptions.push(
       panel.webview.onDidReceiveMessage((message: unknown) => {
-        void this.handlePanelMessage(message).catch((error: unknown) => {
+        void this.handlePanelMessage(message, session).catch((error: unknown) => {
           void vscode.window.showErrorMessage(errorMessage(error));
         });
       }),
       panel.onDidDispose(() => {
-        if (this.panel === panel) {
-          this.panel = undefined;
-        }
-        this.disposePanelSubscriptions();
+        if (this.panels.get(key) === session) this.panels.delete(key);
+        this.disposePanelSession(session);
       })
-    ];
+    );
+    panel.webview.html = createPageHtml(this.workflows);
+    return session;
   }
 
   dispose(): void {
     this.categoryMessageSubscription?.dispose();
     this.visibilitySubscription?.dispose();
     this.databaseSubscription.dispose();
-    this.panel?.dispose();
-    this.panel = undefined;
+    for (const session of this.panels.values()) {
+      session.panel.dispose();
+      this.disposePanelSession(session);
+    }
+    this.panels.clear();
     this.categoryView = undefined;
-    this.disposePanelSubscriptions();
   }
 
-  private disposePanelSubscriptions(): void {
-    for (const subscription of this.panelSubscriptions.splice(0)) {
+  private disposePanelSession(session: RecordsPanelSession): void {
+    for (const subscription of session.subscriptions.splice(0)) {
       subscription.dispose();
     }
   }
@@ -136,68 +160,79 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('提示词分类标识无效。');
       }
       this.selectedCategoryId = message.categoryId;
-      this.viewMode = 'records';
-      this.open();
-      this.postState();
+      const session = this.open(message.categoryId, 'records');
+      this.postState(session);
       return;
     }
 
     if (message.command === 'open-projects') {
-      this.viewMode = 'projects';
       this.selectedCategoryId = undefined;
-      this.open();
-      this.postState();
+      const session = this.open(undefined, 'projects');
+      this.postState(session);
       return;
     }
 
     if (message.command === 'add-record') {
-      await this.addRecord(message.categoryId);
+      const workflow = this.findWorkflow(message.categoryId);
+      this.selectedCategoryId = workflow.toolName;
+      const session = this.open(workflow.toolName, 'records');
+      session.pendingAddRecordCategoryId = workflow.toolName;
+      this.postState(session);
+      this.openPendingAddRecordDialog(session);
       return;
     }
 
     if (message.command === 'create-project') {
-      this.viewMode = 'create-project';
-      this.selectedCategoryId = undefined;
-      this.open();
-      this.postState();
+      this.openCreateProjectDialog();
     }
 
   }
 
-  private async handlePanelMessage(value: unknown): Promise<void> {
+  private async handlePanelMessage(value: unknown, session: RecordsPanelSession): Promise<void> {
     if (!isRecord(value) || typeof value.command !== 'string') {
       return;
     }
 
     const message = value as unknown as ViewMessage;
     if (message.command === 'ready') {
-      this.postState();
+      session.ready = true;
+      this.postState(session);
+      this.openPendingAddRecordDialog(session);
+      this.openPendingProjectDialog(session);
+      return;
+    }
+    if (message.command === 'save-add-record') {
+      this.saveAddedRecord(message, session);
+      return;
+    }
+    if (message.command === 'update-record') {
+      this.saveEditedRecord(message, session);
+      return;
+    }
+    if (message.command === 'create-project') {
+      this.openCreateProjectDialog(session);
       return;
     }
     if (message.command === 'submit-project') {
       try {
-        this.createWorkProject(message.projectName, message.projectDescription);
+        this.createWorkProject(message.projectName, message.projectDescription, session);
+        void session.panel.webview.postMessage({ command: 'project-saved' });
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
+        void session.panel.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
       }
       return;
     }
     if (message.command === 'update-project') {
       try {
-        this.updateWorkProject(message.projectId, message.projectName, message.projectDescription);
+        this.updateWorkProject(message.projectId, message.projectName, message.projectDescription, session);
+        void session.panel.webview.postMessage({ command: 'project-saved' });
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
+        void session.panel.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
       }
       return;
     }
-    if (message.command === 'cancel-project-create') {
-      this.viewMode = 'projects';
-      this.editingWorkProjectId = undefined;
-      this.postState();
-      return;
-    }
     if (message.command === 'select-record') {
-      await this.editRecord(message.recordId);
+      this.editRecord(message.recordId, session);
       return;
     }
     if (message.command === 'run-record') {
@@ -210,35 +245,35 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
            !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
         throw new Error('项目筛选条件无效。');
       }
-      this.selectedWorkProjectFilter = message.projectId;
-      this.postState();
+      session.projectFilter = message.projectId;
+      this.postState(session);
       return;
     }
     if (message.command === 'edit-project') {
-      await this.editWorkProject(message.projectId);
+      this.editWorkProject(message.projectId, session);
       return;
     }
     if (message.command === 'delete-project') {
       try {
-        this.deleteWorkProject(message.projectId, message.confirmationTitle);
+        this.deleteWorkProject(message.projectId, message.confirmationTitle, session);
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'delete-error', text: errorMessage(error) });
+        void session.panel.webview.postMessage({ command: 'delete-error', text: errorMessage(error) });
       }
       return;
     }
     if (message.command === 'view-result') {
-      this.postGeneratedResult(message.recordId);
+      this.postGeneratedResult(message.recordId, session);
       return;
     }
     if (message.command === 'view-episodes') {
-      this.postGeneratedEpisodes(message.recordId);
+      this.postGeneratedEpisodes(message.recordId, session);
       return;
     }
     if (message.command === 'save-generated-result') {
       try {
-        this.saveGeneratedResult(message.recordId, message.content, message.contentZh, message.contentEn);
+        this.saveGeneratedResult(message.recordId, message.content, message.contentZh, message.contentEn, session);
       } catch (error) {
-        void this.panel?.webview.postMessage({
+        void session.panel.webview.postMessage({
           command: 'generated-result-save-error',
           recordId: message.recordId,
           text: errorMessage(error)
@@ -248,9 +283,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
     if (message.command === 'delete-record') {
       try {
-        this.deleteRecord(message.recordId, message.confirmationTitle);
+        this.deleteRecord(message.recordId, message.confirmationTitle, session);
       } catch (error) {
-        void this.panel?.webview.postMessage({
+        void session.panel.webview.postMessage({
           command: 'delete-error',
           text: errorMessage(error)
         });
@@ -259,7 +294,11 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   }
 
   /** 核对用户输入的标题后删除记录。 */
-  private deleteRecord(recordId: string | undefined, confirmationTitle: string | undefined): void {
+  private deleteRecord(
+    recordId: string | undefined,
+    confirmationTitle: string | undefined,
+    session: RecordsPanelSession
+  ): void {
     if (typeof recordId !== 'string' || typeof confirmationTitle !== 'string') {
       throw new Error('删除记录所需信息缺失。');
     }
@@ -277,11 +316,11 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       throw new Error('删除记录失败。');
     }
 
-    void this.panel?.webview.postMessage({ command: 'delete-success' });
+    void session.panel.webview.postMessage({ command: 'delete-success' });
   }
 
   /** 按需向记录页面发送指定记录的 Copilot 返回内容。 */
-  private postGeneratedResult(recordId: string | undefined): void {
+  private postGeneratedResult(recordId: string | undefined, session: RecordsPanelSession): void {
     if (typeof recordId !== 'string') {
       throw new Error('查看生成结果所需的记录标识缺失。');
     }
@@ -293,7 +332,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const isBilingualContent = record.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME;
     const isContent = getWorkflowResultType(record.categoryId) === 'content';
-    void this.panel?.webview.postMessage({
+    void session.panel.webview.postMessage({
       command: 'generated-result',
       recordId: record.id,
       title: record.title || '旧记录（无标题）',
@@ -308,7 +347,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   }
 
   /** 按需向记录页面发送指定创作任务的分集内容。 */
-  private postGeneratedEpisodes(recordId: string | undefined): void {
+  private postGeneratedEpisodes(recordId: string | undefined, session: RecordsPanelSession): void {
     if (typeof recordId !== 'string') {
       throw new Error('查看分集内容所需的记录标识缺失。');
     }
@@ -319,7 +358,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       throw new Error('要查看的分集创作任务不存在。');
     }
     const episodes: GeneratedEpisodeContent[] = this.database.listGeneratedEpisodeContents(recordId);
-    void this.panel?.webview.postMessage({
+    void session.panel.webview.postMessage({
       command: 'generated-episodes',
       recordId,
       title: record.title || '旧记录（无标题）',
@@ -332,7 +371,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     recordId: string | undefined,
     content: string | undefined,
     contentZh: string | undefined,
-    contentEn: string | undefined
+    contentEn: string | undefined,
+    session: RecordsPanelSession
   ): void {
     if (typeof recordId !== 'string') {
       throw new Error('保存生成结果所需的记录标识缺失。');
@@ -365,54 +405,62 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       throw new Error('要修改的提示词记录不存在。');
     }
 
-    void this.panel?.webview.postMessage({
+    void session.panel.webview.postMessage({
       command: 'generated-result-saved',
       recordId
     });
   }
 
-  private async addRecord(categoryId: string | undefined): Promise<void> {
-    const workflow = this.findWorkflow(categoryId);
-    if (this.activeRecordForms.has(workflow.toolName)) {
+  private openPendingAddRecordDialog(session: RecordsPanelSession): void {
+    if (!session.ready || !session.pendingAddRecordCategoryId) {
       return;
     }
-    this.activeRecordForms.add(workflow.toolName);
-
-    const formWorkflow: FormWorkflow = {
-      ...workflow,
-      title: `添加${workflow.title}信息`,
-      notice: '填写信息后可保存，或保存并运行对应提示词。'
-    };
-    let submission: FormSubmission | undefined;
-    try {
-      submission = await collectViewForm(
-        formWorkflow,
-        undefined,
-        this.database.listWorkProjects()
-      );
-    } finally {
-      this.activeRecordForms.delete(workflow.toolName);
-    }
-    if (!submission) {
-      return;
-    }
-
-    const record = this.database.saveRecord({
-      title: submission.values.title,
+    const workflow = this.findWorkflow(session.pendingAddRecordCategoryId);
+    session.pendingAddRecordCategoryId = undefined;
+    void session.panel.webview.postMessage({
+      command: 'open-add-record-dialog',
       categoryId: workflow.toolName,
-      categoryName: workflow.title,
-      projectId: submission.projectId,
-      schema: workflow.fields,
-      data: submission.values
+      title: `添加${workflow.title}信息`,
+      formFields: renderAddRecordFields(workflow, this.database.listWorkProjects()),
+      supportsImageAttachments: workflow.supportsImageAttachments === true
     });
-    this.selectedCategoryId = workflow.toolName;
-    this.postState();
-    if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id);
-    }
   }
 
-  private async editRecord(recordId: string | undefined): Promise<void> {
+  private saveAddedRecord(message: ViewMessage, session: RecordsPanelSession): void {
+    let workflow: FormWorkflow;
+    let values: FormValues | undefined;
+    try {
+      workflow = this.findWorkflow(message.categoryId);
+      values = validateWorkflowFormValues(message.values, workflow);
+      if (!values || typeof message.projectId !== 'string' ||
+          (message.projectId !== '0' &&
+           !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
+        throw new Error('表单数据无效，请检查后重新提交。');
+      }
+      this.database.saveRecord({
+        title: values.title,
+        categoryId: workflow.toolName,
+        categoryName: workflow.title,
+        projectId: message.projectId,
+        schema: workflow.fields,
+        data: values
+      });
+    } catch (error) {
+      void session.panel.webview.postMessage({
+        command: 'add-record-error',
+        text: errorMessage(error)
+      });
+      return;
+    }
+
+    this.selectedCategoryId = workflow.toolName;
+    session.categoryId = workflow.toolName;
+    session.viewMode = 'records';
+    this.postState(session);
+    void session.panel.webview.postMessage({ command: 'add-record-saved' });
+  }
+
+  private editRecord(recordId: string | undefined, session: RecordsPanelSession): void {
     if (typeof recordId !== 'string') {
       throw new Error('记录标识缺失。');
     }
@@ -433,36 +481,57 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       title: record.title ?? recordValues.title ?? '',
       projectId: record.projectId
     };
-    const editWorkflow: FormWorkflow = {
-      ...workflow,
-      title: `选择${workflow.title}信息`,
-      notice: '可修改参数并保存；需要生成内容时，请在任务列表中选择“运行生成”。',
-      showRunButton: false,
-      fields
-    };
-    const submission = await collectViewForm(
-      editWorkflow,
-      initialValues,
-      this.database.listWorkProjects()
-    );
-    if (!submission) {
-      return;
-    }
-
-    const updatedRecord = this.database.updateRecord(record.id, {
-      title: submission.values.title,
-      projectId: submission.projectId,
-      schema: fields,
-      data: submission.values
+    const editWorkflow: FormWorkflow = { ...workflow, fields };
+    void session.panel.webview.postMessage({
+      command: 'open-add-record-dialog',
+      mode: 'edit',
+      recordId: record.id,
+      categoryId: workflow.toolName,
+      title: `编辑${workflow.title}信息`,
+      formFields: renderAddRecordFields(editWorkflow, this.database.listWorkProjects(), initialValues),
+      supportsImageAttachments: workflow.supportsImageAttachments === true
     });
-    if (!updatedRecord) {
-      throw new Error('记录已不存在，无法保存修改。');
-    }
+  }
 
-    this.selectedCategoryId = record.categoryId;
-    this.postState();
-    if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id);
+  private saveEditedRecord(message: ViewMessage, session: RecordsPanelSession): void {
+    try {
+      if (typeof message.recordId !== 'string') {
+        throw new Error('记录标识缺失。');
+      }
+      const record = this.database.getRecord(message.recordId);
+      if (!record) {
+        throw new Error('记录不存在或已被删除。');
+      }
+      const workflow = this.findWorkflow(record.categoryId);
+      const savedFields = readFormFields(record.schema);
+      const fields = savedFields.some((field) => field.name === 'title')
+        ? savedFields
+        : [RECORD_TITLE_FIELD, ...savedFields];
+      const values = validateWorkflowFormValues(message.values, { ...workflow, fields });
+      if (!values || typeof message.projectId !== 'string' ||
+          (message.projectId !== '0' &&
+           !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
+        throw new Error('表单数据无效，请检查后重新提交。');
+      }
+      const updatedRecord = this.database.updateRecord(record.id, {
+        title: values.title,
+        projectId: message.projectId,
+        schema: fields,
+        data: values
+      });
+      if (!updatedRecord) {
+        throw new Error('记录已不存在，无法保存修改。');
+      }
+      this.selectedCategoryId = record.categoryId;
+      session.categoryId = record.categoryId;
+      session.viewMode = 'records';
+      this.postState(session);
+      void session.panel.webview.postMessage({ command: 'record-updated' });
+    } catch (error) {
+      void session.panel.webview.postMessage({
+        command: 'update-record-error',
+        text: errorMessage(error)
+      });
     }
   }
 
@@ -503,18 +572,41 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   }
 
   /** 校验编辑器页面提交的数据并创建项目。 */
-  private createWorkProject(name: string | undefined, description: string | undefined): void {
+  private createWorkProject(
+    name: string | undefined,
+    description: string | undefined,
+    session: RecordsPanelSession
+  ): void {
     if (typeof name !== 'string' || typeof description !== 'string' || !name.trim()) {
       throw new Error('项目名称不能为空，项目简介必须是文本。');
     }
     this.database.createWorkProject({ name, description });
-    this.viewMode = 'projects';
-    this.selectedCategoryId = undefined;
-    this.postState();
+    session.categoryId = undefined;
+    session.viewMode = 'projects';
+    this.postState(session);
   }
 
-  /** 打开指定项目的编辑页面并传入当前数据。 */
-  private editWorkProject(projectId: string | undefined): void {
+  private openCreateProjectDialog(currentSession?: RecordsPanelSession): void {
+    const session = currentSession ?? this.open(undefined, 'projects');
+    session.viewMode = 'projects';
+    session.categoryId = undefined;
+    this.selectedCategoryId = undefined;
+    session.pendingProjectDialog = 'create';
+    this.postState(session);
+    this.openPendingProjectDialog(session);
+  }
+
+  private openPendingProjectDialog(session: RecordsPanelSession): void {
+    if (!session.ready || !session.pendingProjectDialog) {
+      return;
+    }
+    const mode = session.pendingProjectDialog;
+    session.pendingProjectDialog = undefined;
+    void session.panel.webview.postMessage({ command: 'open-project-dialog', mode });
+  }
+
+  /** 在项目列表上打开指定项目的编辑对话框。 */
+  private editWorkProject(projectId: string | undefined, session: RecordsPanelSession): void {
     if (typeof projectId !== 'string') {
       throw new Error('项目标识缺失。');
     }
@@ -522,16 +614,21 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (!project) {
       throw new Error('项目不存在或已被删除。');
     }
-    this.editingWorkProjectId = project.id;
-    this.viewMode = 'edit-project';
-    this.postState();
+    void session.panel.webview.postMessage({
+      command: 'open-project-dialog',
+      mode: 'edit',
+      projectId: project.id,
+      projectName: project.name,
+      projectDescription: project.description
+    });
   }
 
   /** 校验编辑页面提交的数据并更新项目。 */
   private updateWorkProject(
     projectId: string | undefined,
     name: string | undefined,
-    description: string | undefined
+    description: string | undefined,
+    session: RecordsPanelSession
   ): void {
     if (typeof projectId !== 'string' || typeof name !== 'string' ||
         typeof description !== 'string' || !name.trim()) {
@@ -540,13 +637,17 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (!this.database.updateWorkProject(projectId, { name, description })) {
       throw new Error('项目已不存在，无法保存修改。');
     }
-    this.editingWorkProjectId = undefined;
-    this.viewMode = 'projects';
-    this.postState();
+    session.categoryId = undefined;
+    session.viewMode = 'projects';
+    this.postState(session);
   }
 
   /** 校验确认名称后删除项目及其关联记录。 */
-  private deleteWorkProject(projectId: string | undefined, confirmationTitle: string | undefined): void {
+  private deleteWorkProject(
+    projectId: string | undefined,
+    confirmationTitle: string | undefined,
+    session: RecordsPanelSession
+  ): void {
     if (typeof projectId !== 'string' || typeof confirmationTitle !== 'string') {
       throw new Error('删除项目所需信息缺失。');
     }
@@ -557,13 +658,13 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (confirmationTitle !== project.name) {
       throw new Error('输入的名称与项目名称不一致，未删除。');
     }
-    if (this.selectedWorkProjectFilter === project.id) {
-      this.selectedWorkProjectFilter = 'all';
+    if (session.projectFilter === project.id) {
+      session.projectFilter = 'all';
     }
     if (!this.database.deleteWorkProject(project.id)) {
       throw new Error('删除项目失败。');
     }
-    void this.panel?.webview.postMessage({ command: 'delete-success' });
+    void session.panel.webview.postMessage({ command: 'delete-success' });
   }
 
   private findWorkflow(categoryId: string | undefined): FormWorkflow {
@@ -574,7 +675,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     return workflow;
   }
 
-  private postState(): void {
+  private postState(targetSession?: RecordsPanelSession): void {
     const categories = this.workflows.map((workflow) => ({
       id: workflow.toolName,
       title: workflow.title
@@ -587,44 +688,39 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       });
     }
 
-    if (!this.panel) {
-      return;
-    }
-
-    const selectedCategory = this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId);
-    const categoryTitle = this.viewMode === 'projects' ? '项目管理'
-      : this.viewMode === 'create-project' ? '创建项目'
-        : this.viewMode === 'edit-project' ? '编辑项目'
-          : selectedCategory?.title ?? '请选择任务';
-    this.panel.title = categoryTitle;
     const projects = this.database.listWorkProjects();
     const projectNames = new Map(projects.map((project) => [project.id, project.name]));
-    const records = (this.viewMode !== 'records' || this.selectedCategoryId === undefined
-      ? []
-      : this.database.listRecords(
-        this.selectedCategoryId,
-        this.selectedWorkProjectFilter === 'all' ? undefined : this.selectedWorkProjectFilter
-      )).map((record) => ({
-      id: record.id,
-      title: record.title,
-      projectId: record.projectId,
-      projectName: projectNames.get(record.projectId),
-      createdAt: record.createdAt,
-      generatedAt: record.generatedAt
-    }));
+    const sessions = targetSession ? [targetSession] : this.panels.values();
+    for (const session of sessions) {
+      const selectedCategory = this.workflows.find((workflow) => workflow.toolName === session.categoryId);
+      const categoryTitle = session.viewMode === 'projects'
+        ? '项目管理'
+        : selectedCategory?.title ?? '请选择任务';
+      session.panel.title = categoryTitle;
+      const records = (session.viewMode !== 'records' || session.categoryId === undefined
+        ? []
+        : this.database.listRecords(
+          session.categoryId,
+          session.projectFilter === 'all' ? undefined : session.projectFilter
+        )).map((record) => ({
+        id: record.id,
+        title: record.title,
+        projectId: record.projectId,
+        projectName: projectNames.get(record.projectId),
+        createdAt: record.createdAt,
+        generatedAt: record.generatedAt
+      }));
 
-    void this.panel.webview.postMessage({
-      command: 'state',
-      viewMode: this.viewMode,
-      categoryId: this.selectedCategoryId,
-      categoryTitle,
-      records,
-      projects,
-      projectFilter: this.selectedWorkProjectFilter,
-      editingWorkProject: this.viewMode === 'edit-project'
-        ? projects.find((project) => project.id === this.editingWorkProjectId)
-        : undefined
-    });
+      void session.panel.webview.postMessage({
+        command: 'state',
+        viewMode: session.viewMode,
+        categoryId: session.categoryId,
+        categoryTitle,
+        records,
+        projects,
+        projectFilter: session.projectFilter
+      });
+    }
   }
 }
 
@@ -653,19 +749,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-async function collectViewForm(
-  workflow: FormWorkflow,
-  initialValues?: FormValues,
-  projects: readonly WorkProject[] = []
-): Promise<FormSubmission | undefined> {
-  const cancellationSource = new vscode.CancellationTokenSource();
-  try {
-    return await collectFormValues(workflow, cancellationSource.token, initialValues, projects);
-  } finally {
-    cancellationSource.dispose();
-  }
 }
 
 function createCategoryHtml(): string {
@@ -762,6 +845,9 @@ function createCategoryHtml(): string {
             <button id="open-model-config" class="select" type="button">模型配置（预览）</button>
             <button id="add-model-config" class="add" type="button">添加</button>
           </div>
+          <div class="category-item">
+            <button id="open-database-backup" class="select" type="button">数据库备份（预览）</button>
+          </div>
         </nav>
       </div>
     </section>
@@ -790,18 +876,23 @@ function createCategoryHtml(): string {
     const modelConfigItem = document.querySelectorAll('.config-card .category-item')[1];
     const openModelConfigButton = document.getElementById('open-model-config');
     const addModelConfigButton = document.getElementById('add-model-config');
+    const databaseBackupItem = document.querySelectorAll('.config-card .category-item')[2];
+    const openDatabaseBackupButton = document.getElementById('open-database-backup');
     if (!(settingsItem instanceof HTMLElement) ||
         !(openProjectsButton instanceof HTMLButtonElement) ||
         !(createProjectButton instanceof HTMLButtonElement) ||
         !(modelConfigItem instanceof HTMLElement) ||
         !(openModelConfigButton instanceof HTMLButtonElement) ||
-        !(addModelConfigButton instanceof HTMLButtonElement)) {
+      !(addModelConfigButton instanceof HTMLButtonElement) ||
+      !(databaseBackupItem instanceof HTMLElement) ||
+      !(openDatabaseBackupButton instanceof HTMLButtonElement)) {
       throw new Error('设置菜单项缺失。');
     }
     bindPressedState(openProjectsButton, settingsItem, true);
     bindPressedState(createProjectButton, settingsItem, false);
     bindPressedState(openModelConfigButton, modelConfigItem, true);
     bindPressedState(addModelConfigButton, modelConfigItem, false);
+    bindPressedState(openDatabaseBackupButton, databaseBackupItem, true);
     document.getElementById('open-projects').addEventListener('click', () => {
       vscode.postMessage({ command: 'open-projects' });
     });
@@ -921,12 +1012,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     #records-table .record-row > * { display: table-cell; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); vertical-align: middle; }
     .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) 96px; align-items: center; gap: 12px; }
     .table.has-project-columns .table-header, .table.has-project-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 96px; }
-    .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 112px 60px; }
+    .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 112px max-content; }
     #records-table:not(.has-project-columns) .project-column { display: none; }
-    #records-table:not(.has-episode-content-columns) .episode-content-action-column,
+    #records-table:not(.has-episode-content-columns) .episode-content-action-column { display: none; }
     #records-table.has-episode-content-columns .row-action-column { display: none; }
-    #records-table.has-episode-content-columns .episode-content-action-column { text-align: center; }
-    #records-table.has-episode-content-columns .episode-content-action-column > .record-actions { justify-content: center; }
+    #records-table.has-episode-content-columns .episode-content-action-column { text-align: left; }
+    #records-table.has-episode-content-columns .episode-content-action-column > .record-actions { justify-content: flex-start; }
+    #records-table .record-actions { margin-left: -8px; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .record-row { min-height: 44px; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     .record-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -942,31 +1034,31 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .edit-button { min-width: 44px; padding: 5px 8px; color: var(--vscode-textLink-foreground); background: transparent; }
     .record-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
     .record-actions button { flex: 0 0 auto; white-space: nowrap; }
-    .filter-toolbar { display: flex; max-width: 720px; align-items: center; gap: 8px; margin-bottom: 14px; }
-    .project-filter { position: relative; width: min(420px, 100%); min-width: 0; }
+    .filter-toolbar { display: flex; width: 100%; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 14px; }
+    .project-filter { position: relative; width: fit-content; max-width: 100%; min-width: 0; }
     .project-filter-trigger {
-      display: flex; width: 100%; min-height: 32px; align-items: center; justify-content: space-between;
+      display: flex; width: max-content; max-width: 100%; min-height: 32px; align-items: center; justify-content: space-between;
       gap: 12px; padding: 4px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; text-align: left;
     }
     .project-filter-trigger.is-scope-filter { color: var(--vscode-textLink-foreground); }
     .project-filter-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-    .project-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-filter-label { min-width: 0; max-width: min(360px, calc(100vw - 100px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .project-filter-chevron {
       width: 8px; height: 8px; flex: 0 0 auto; margin: -4px 2px 0 0;
       border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg);
     }
     .project-filter-menu {
-      position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: 0;
-      max-height: 240px; overflow-y: auto; padding: 3px;
+      position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: auto; width: max-content; min-width: 100%;
+      max-width: min(420px, calc(100vw - 56px)); max-height: 240px; overflow: auto; padding: 3px;
       background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
       border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
       border-radius: 3px; box-shadow: 0 3px 8px var(--vscode-widget-shadow);
     }
     .project-filter-menu[hidden] { display: none; }
     .project-filter-option {
-      display: block; width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
+      display: block; width: max-content; min-width: 100%; max-width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
       color: var(--vscode-input-foreground); background: transparent; border: 0;
       text-align: left; text-overflow: ellipsis; white-space: nowrap;
     }
@@ -985,16 +1077,18 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .filter-button { min-height: 30px; padding: 4px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; }
     .project-table .table-header, .project-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) 96px; }
     .project-description { color: var(--vscode-descriptionForeground); }
-    .project-form { display: grid; max-width: 760px; gap: 16px; }
-    .project-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
+    #project-dialog { width: min(560px, calc(100vw - 32px)); }
+    .project-form { display: grid; min-width: 0; gap: 14px; }
+    .project-dialog-body { display: grid; gap: 14px; }
+    .project-form h2 { margin: 0; font-size: 15px; font-weight: 600; }
     .project-form label { display: block; margin-bottom: 6px; font-weight: 600; }
     .project-form input, .project-form textarea {
       width: 100%; padding: 8px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit;
     }
-    .project-form input { min-height: 36px; }
-    .project-form textarea { min-height: 120px; resize: vertical; }
+    .project-form input { min-height: 34px; }
+    .project-form textarea { min-height: 34px; max-height: 240px; resize: vertical; }
     .project-form input:focus, .project-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
     .project-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
     .project-form-actions { display: flex; justify-content: flex-start; gap: 8px; }
@@ -1033,7 +1127,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     dialog > form { display: flex; min-height: 0; flex-direction: column; }
     .dialog-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 16px; }
     dialog p { margin: 0 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
-    .delete-title-highlight { padding: 2px 5px; color: var(--vscode-foreground); background: var(--vscode-editor-background); border-radius: 3px; }
+    .delete-title-highlight { padding: 2px 5px; color: #FFFFFF; background: #522522; border-radius: 3px; }
+    body.vscode-dark .delete-title-highlight { background: #4E211F; }
     .delete-warning { color: var(--vscode-errorForeground); font-weight: 700; }
     dialog label { display: block; margin-bottom: 6px; }
     dialog input {
@@ -1045,8 +1140,62 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .delete-error { margin-top: 8px; color: var(--vscode-errorForeground); }
     .delete-error[hidden] { display: none; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-    #confirm-delete:disabled { cursor: default; }
+    #delete-form .dialog-actions { gap: 6px; margin-top: 14px; }
+    .dialog-save-button { min-height: 28px; padding: 3px 8px; }
+    .dialog-cancel-button {
+      min-height: 28px; padding: 3px 8px; color: #252525; background: #D2D2D2;
+      border: 1px solid #A8A8A8; border-radius: 3px; font: inherit;
+    }
+    .dialog-cancel-button:hover { background: #BDBDBD; }
+    .dialog-cancel-button:active { background: #A8A8A8; }
+    body.vscode-dark .dialog-cancel-button { color: #F3F3F3; background: #414141; border-color: #5A5A5A; }
+    body.vscode-dark .dialog-cancel-button:hover { background: #505050; }
+    body.vscode-dark .dialog-cancel-button:active { background: #343434; }
+    #confirm-delete {
+      min-height: 28px; padding: 3px 8px; color: #FFFFFF; background: #A93029;
+      border: 0; border-radius: 3px;
+    }
+    #confirm-delete:hover { background: #972B25; }
+    #confirm-delete:active { background: #84251F; }
+    #confirm-delete:disabled {
+      color: #D8C1BF; background: #522522; border: 1px solid #69332F;
+      opacity: 1; cursor: default;
+    }
+    body.vscode-dark #confirm-delete { background: #A1332D; }
+    body.vscode-dark #confirm-delete:hover { background: #B43A33; }
+    body.vscode-dark #confirm-delete:active { background: #8D2823; }
+    body.vscode-dark #confirm-delete:disabled { background: #4E211F; border-color: #66302D; }
     .result-dialog { width: min(680px, calc(100vw - 32px)); }
+    .add-record-dialog { width: min(720px, calc(100vw - 32px)); }
+    .add-record-fields { display: grid; gap: 14px; }
+    .add-record-fields .field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+    .add-record-fields .field-heading { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+    .add-record-fields label { margin: 0; font-size: 12px; font-weight: 600; }
+    .add-record-fields .field-description { color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .add-record-fields input, .add-record-fields select, .add-record-fields textarea {
+      width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; font: inherit;
+    }
+    .add-record-fields textarea { min-height: 34px; max-height: 240px; resize: vertical; }
+    .add-record-fields input:focus, .add-record-fields select:focus, .add-record-fields textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
+    .add-record-fields .select-with-custom { display: flex; min-width: 0; gap: 8px; }
+    .add-record-fields .select-with-custom select { flex: 1 1 100%; }
+    .add-record-fields .select-with-custom.has-custom select { flex: 0 1 auto; max-width: 55%; }
+    .add-record-fields .custom-option { flex: 1 1 0; min-width: 0; }
+    .add-record-fields .custom-option[hidden] { display: none; }
+    .add-record-fields .add-image-area { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; }
+    .add-image-area h3 { margin: 0; font-size: 12px; font-weight: 600; }
+    .add-image-area input[type="file"] { display: none; }
+    .add-image-area .image-grid { display: flex; min-width: 0; flex-wrap: wrap; gap: 8px; }
+    .add-image-area .image-card, .add-image-area .image-add { position: relative; width: 72px; height: 72px; flex: 0 0 72px; overflow: hidden; border: 1px solid var(--vscode-panel-border); border-radius: 3px; }
+    .add-image-area .image-card img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .add-image-area .image-remove { position: absolute; top: 3px; right: 3px; min-width: 24px; min-height: 24px; padding: 0; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+    .add-image-area .image-add { display: grid; place-items: center; padding: 0; color: var(--vscode-descriptionForeground); background: var(--vscode-input-background); border-style: dashed; font-size: 26px; }
+    .add-image-area .image-status { min-height: 0; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
+    .add-image-area .image-status:empty { display: none; }
+    .add-record-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
+    .add-record-error[hidden] { display: none; }
     #episode-content-dialog { width: min(580px, calc(100vw - 32px)); }
     .result-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .result-error[hidden] { display: none; }
@@ -1068,7 +1217,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       resize: none; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .result-dialog textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
-    .episode-content-table { max-height: min(60vh, 480px); overflow-y: auto; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px; }
+    .episode-content-table { border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px; }
     .episode-content-header, .episode-content-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px 10px; }
     .episode-content-header { color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .episode-content-row + .episode-content-row { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
@@ -1092,7 +1241,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       main { padding: 16px 12px; }
       .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 96px; gap: 5px; }
       .table.has-project-columns .table-header, .table.has-project-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 96px; gap: 5px; }
-      .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 92px 52px; gap: 5px; }
+      .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 92px max-content; gap: 5px; }
       .project-table .table-header, .project-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px 96px; gap: 5px; }
       .record-time { font-size: 10px; }
     }
@@ -1113,33 +1262,57 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">项目名称</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="episode-content-action-column">操作</span><span class="row-action-column"></span></div>
+          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">项目名称</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="episode-content-action-column">操作</span><span class="row-action-column">操作</span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
       </div>
     </section>
     <section id="projects-section" class="project-table" aria-live="polite" hidden>
-      <div class="table-header" role="row"><span>项目名称</span><span>项目简介</span><span>创建时间</span><span></span></div>
+      <div class="table-header" role="row"><span>项目名称</span><span>项目简介</span><span>创建时间</span><span>操作</span></div>
       <div id="project-list" role="rowgroup"></div>
     </section>
-    <section id="create-project-section" hidden>
+    <dialog id="project-dialog" data-resizable="false" aria-labelledby="project-form-title">
       <form id="project-form" class="project-form">
-        <h2 id="project-form-title">创建项目</h2>
-        <div>
-          <label for="project-name">项目名称</label>
-          <input id="project-name" name="name" type="text" maxlength="120" required autocomplete="off">
+        <div class="dialog-header">
+          <h2 id="project-form-title">创建项目</h2>
+          <button class="dialog-close" id="close-project-dialog" type="button" aria-label="关闭" title="关闭">×</button>
         </div>
-        <div>
-          <label for="project-description">项目简介</label>
-          <textarea id="project-description" name="description" rows="5"></textarea>
-        </div>
-        <p id="project-form-error" class="project-form-error" role="alert"></p>
-        <div class="project-form-actions">
-          <button id="cancel-project-create" class="edit-button" type="button">取消</button>
-          <button id="save-project" class="filter-button" type="submit">创建</button>
+        <div class="dialog-body project-dialog-body">
+          <div>
+            <label for="project-name">项目名称</label>
+            <input id="project-name" name="name" type="text" maxlength="120" required autocomplete="off">
+          </div>
+          <div>
+            <label for="project-description">项目简介</label>
+            <textarea id="project-description" name="description" rows="1"></textarea>
+          </div>
+          <p id="project-form-error" class="project-form-error" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button id="cancel-project-dialog" class="dialog-cancel-button" type="button">取消</button>
+            <button id="save-project" class="filter-button dialog-save-button" type="submit">创建</button>
+          </div>
         </div>
       </form>
-    </section>
+    </dialog>
+    <dialog id="add-record-dialog" class="add-record-dialog" data-resizable="true" aria-labelledby="add-record-dialog-title">
+      <form id="add-record-form">
+        <div class="dialog-header">
+          <h2 id="add-record-dialog-title">添加任务</h2>
+          <button class="dialog-close" id="close-add-record" type="button" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="dialog-body">
+          <div id="add-record-fields" class="add-record-fields"></div>
+          <p id="add-record-error" class="add-record-error" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button id="cancel-add-record" class="dialog-cancel-button" type="button">取消</button>
+            <button id="add-record-save" class="filter-button dialog-save-button" type="submit">保存</button>
+          </div>
+        </div>
+      </form>
+      <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
+    </dialog>
     <dialog id="project-warning-dialog" data-resizable="false" aria-labelledby="project-warning-title">
       <div class="dialog-header">
         <h2 id="project-warning-title">删除项目</h2>
@@ -1149,7 +1322,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         <p class="delete-warning">此操作不可撤销。删除项目会同时删除该项目下的所有任务数据及已生成内容。</p>
         <p id="project-warning-name"></p>
         <div class="dialog-actions">
-          <button id="cancel-project-warning" type="button">取消</button>
+          <button id="cancel-project-warning" class="dialog-cancel-button" type="button">取消</button>
           <button id="continue-project-delete" class="delete-button" type="button">继续删除</button>
         </div>
       </div>
@@ -1169,7 +1342,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           <input id="delete-title" type="text" autocomplete="off" spellcheck="false">
           <p id="delete-error" class="delete-error" role="alert" hidden></p>
           <div class="dialog-actions">
-            <button id="cancel-delete" type="button">取消</button>
+            <button id="cancel-delete" class="dialog-cancel-button" type="button">取消</button>
             <button id="confirm-delete" type="submit" disabled>删除</button>
           </div>
         </div>
@@ -1177,6 +1350,26 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
       <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
       <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
+    </dialog>
+    <dialog id="run-confirm-dialog" data-resizable="false" aria-labelledby="run-confirm-title">
+      <form id="run-confirm-form">
+        <div class="dialog-header">
+          <h2 id="run-confirm-title">确认运行生成</h2>
+          <button class="dialog-close" id="close-run-confirm" type="button" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="dialog-body">
+          <p id="run-confirm-prompt"></p>
+          <div id="run-confirm-code-field" hidden>
+            <label for="run-confirm-code">输入上方显示的四位验证码</label>
+            <input id="run-confirm-code" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" spellcheck="false" aria-describedby="run-confirm-error">
+          </div>
+          <p id="run-confirm-error" class="delete-error" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button id="cancel-run-confirm" class="dialog-cancel-button" type="button">取消</button>
+            <button id="confirm-run" class="filter-button dialog-save-button" type="submit">确认生成</button>
+          </div>
+        </div>
+      </form>
     </dialog>
     <dialog id="episode-content-dialog" class="result-dialog" data-resizable="true" aria-labelledby="episode-content-dialog-title">
       <div class="dialog-header">
@@ -1225,7 +1418,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         </div>
         <p id="result-error" class="result-error" role="alert" hidden></p>
         <div class="dialog-actions">
-          <button id="edit-result" type="button" disabled>保存</button>
+          <button id="edit-result" class="dialog-save-button" type="button" disabled>保存</button>
         </div>
       </div>
       <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
@@ -1253,16 +1446,24 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const projectList = document.getElementById('project-list');
     const recordsSection = document.getElementById('records-section');
     const projectsSection = document.getElementById('projects-section');
-    const createWorkProjectSection = document.getElementById('create-project-section');
+    const projectDialog = document.getElementById('project-dialog');
     const projectForm = document.getElementById('project-form');
     const projectNameInput = document.getElementById('project-name');
     const projectDescriptionInput = document.getElementById('project-description');
     const projectFormError = document.getElementById('project-form-error');
+    const projectFormTitle = document.getElementById('project-form-title');
+    const saveProjectButton = document.getElementById('save-project');
     const projectFilter = document.getElementById('project-filter');
     const projectFilterTrigger = document.getElementById('project-filter-trigger');
     const projectFilterLabel = document.getElementById('project-filter-label');
     const projectFilterMenu = document.getElementById('project-filter-menu');
     const deleteDialog = document.getElementById('delete-dialog');
+    const addRecordDialog = document.getElementById('add-record-dialog');
+    const addRecordForm = document.getElementById('add-record-form');
+    const addRecordTitle = document.getElementById('add-record-dialog-title');
+    const addRecordFields = document.getElementById('add-record-fields');
+    const addRecordError = document.getElementById('add-record-error');
+    const addRecordSaveButton = document.getElementById('add-record-save');
     const projectWarningDialog = document.getElementById('project-warning-dialog');
     const projectWarningName = document.getElementById('project-warning-name');
     const deleteForm = document.getElementById('delete-form');
@@ -1270,6 +1471,14 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const deleteTitle = document.getElementById('delete-title');
     const deleteError = document.getElementById('delete-error');
     const confirmDelete = document.getElementById('confirm-delete');
+    const runConfirmDialog = document.getElementById('run-confirm-dialog');
+    const runConfirmForm = document.getElementById('run-confirm-form');
+    const runConfirmTitle = document.getElementById('run-confirm-title');
+    const runConfirmPrompt = document.getElementById('run-confirm-prompt');
+    const runConfirmCodeField = document.getElementById('run-confirm-code-field');
+    const runConfirmCode = document.getElementById('run-confirm-code');
+    const runConfirmError = document.getElementById('run-confirm-error');
+    const confirmRunButton = document.getElementById('confirm-run');
     const resultDialog = document.getElementById('result-dialog');
     const episodeContentDialog = document.getElementById('episode-content-dialog');
     const episodeContentDialogTitle = document.getElementById('episode-content-dialog-title');
@@ -1293,16 +1502,21 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
     });
     let pendingDelete;
+    let pendingRun;
     let viewingResultRecordId;
     let viewingEpisodeRecordId;
     let selectedCategoryId;
     let selectedProjectFilter = 'all';
     let projectFilterItems = [];
     let currentViewMode = 'records';
-    let editingWorkProjectId;
+    let editingProjectId;
     let projects = [];
     let viewingResultType;
     let isResultLoaded = false;
+    let addRecordCategoryId;
+    let addRecordMode = 'add';
+    let editingRecordId;
+    let addImageAttachments = [];
     const copyFeedbackTimers = new WeakMap();
 
     document.querySelectorAll('dialog').forEach((dialog) => {
@@ -1406,6 +1620,173 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       return '查看' + workflowTitles[workflowId] + '提示词';
     }
 
+    function openAddRecordDialog(message) {
+      if (typeof message.categoryId !== 'string' || typeof message.formFields !== 'string') return;
+      if (addRecordDialog.open) addRecordDialog.close();
+      addRecordMode = message.mode === 'edit' ? 'edit' : 'add';
+      editingRecordId = addRecordMode === 'edit' ? message.recordId : undefined;
+      addRecordCategoryId = message.categoryId;
+      addRecordTitle.textContent = message.title;
+      addRecordFields.innerHTML = message.formFields;
+      addRecordError.textContent = '';
+      addRecordError.hidden = true;
+      addRecordSaveButton.disabled = false;
+      addImageAttachments = [];
+      const imageValue = document.getElementById('add-image-value');
+      if (imageValue) addImageAttachments = JSON.parse(imageValue.value);
+
+      addRecordFields.querySelectorAll('[data-custom-input]').forEach((select) => {
+        const customInput = document.getElementById(select.dataset.customInput);
+        const wrapper = select.closest('.select-with-custom');
+        const updateCustomInput = () => {
+          const isCustom = select.value === '__custom__';
+          customInput.hidden = !isCustom;
+          customInput.disabled = !isCustom;
+          customInput.required = isCustom;
+          wrapper.classList.toggle('has-custom', isCustom);
+        };
+        select.addEventListener('change', updateCustomInput);
+        updateCustomInput();
+      });
+      addRecordFields.querySelectorAll('textarea').forEach((textarea) => {
+        const resize = () => {
+          textarea.style.height = 'auto';
+          textarea.style.height = Math.max(34, Math.min(textarea.scrollHeight, 240)) + 'px';
+        };
+        textarea.addEventListener('input', resize);
+        if (textarea.value.trim()) resize();
+        else textarea.style.height = '34px';
+      });
+
+      const imageInput = document.getElementById('add-image-file-input');
+      if (imageInput) {
+        imageInput.addEventListener('change', () => {
+          void addRecordImageFiles(imageInput.files);
+          imageInput.value = '';
+        });
+        renderAddRecordImages();
+      }
+      addRecordDialog.showModal();
+      addRecordFields.querySelector('input, select, textarea, button')?.focus();
+    }
+
+    function closeAddRecordDialog() {
+      if (addRecordDialog.open) addRecordDialog.close();
+      addRecordCategoryId = undefined;
+      addRecordMode = 'add';
+      editingRecordId = undefined;
+      addImageAttachments = [];
+      addRecordFields.replaceChildren();
+      addRecordError.textContent = '';
+      addRecordError.hidden = true;
+      addRecordSaveButton.disabled = false;
+    }
+
+    function renderAddRecordImages() {
+      const imageGrid = document.getElementById('add-image-grid');
+      const imageInput = document.getElementById('add-image-file-input');
+      const imageValue = document.getElementById('add-image-value');
+      if (!imageGrid || !imageInput || !imageValue) return;
+      imageGrid.replaceChildren();
+      addImageAttachments.forEach((attachment, index) => {
+        const card = document.createElement('div');
+        card.className = 'image-card';
+        const image = document.createElement('img');
+        image.src = 'data:' + attachment.mimeType + ';base64,' + attachment.data;
+        image.alt = '图片 ' + (index + 1);
+        const remove = makeButton('×', 'image-remove', '移除第 ' + (index + 1) + ' 张图片', () => {
+          addImageAttachments.splice(index, 1);
+          renderAddRecordImages();
+        });
+        card.append(image, remove);
+        imageGrid.append(card);
+      });
+      const add = makeButton('+', 'image-add', '添加图片', () => imageInput.click());
+      imageGrid.append(add);
+      imageValue.value = JSON.stringify(addImageAttachments);
+    }
+
+    async function readAddRecordImage(file) {
+      if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+        throw new Error('仅支持 PNG 和 JPEG 图片。');
+      }
+      if (file.size === 0 || file.size > 10 * 1024 * 1024) {
+        throw new Error('单张图片不能为空或超过 10 MB。');
+      }
+      const signature = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      const isPng = file.type === 'image/png' &&
+        signature.length === 8 && signature[0] === 137 && signature[1] === 80 && signature[2] === 78 &&
+        signature[3] === 71 && signature[4] === 13 && signature[5] === 10 && signature[6] === 26 && signature[7] === 10;
+      const isJpeg = file.type === 'image/jpeg' && signature[0] === 255 && signature[1] === 216 && signature[2] === 255;
+      if (!isPng && !isJpeg) throw new Error('图片内容与声明的 PNG 或 JPEG 格式不匹配。');
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('读取图片失败，请重新选择。'));
+        reader.onload = () => {
+          if (typeof reader.result !== 'string') {
+            reject(new Error('读取图片失败，请重新选择。'));
+            return;
+          }
+          const match = /^data:(image\\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(reader.result);
+          if (!match) {
+            reject(new Error('图片内容不是有效的 PNG 或 JPEG 数据。'));
+            return;
+          }
+          resolve({ mimeType: match[1], data: match[2] });
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function addRecordImageFiles(fileList) {
+      const imageStatus = document.getElementById('add-image-status');
+      if (!imageStatus) return;
+      try {
+        const images = await Promise.all(Array.from(fileList).map(readAddRecordImage));
+        const knownData = new Set(addImageAttachments.map((image) => image.data));
+        const uniqueImages = images.filter((image) => {
+          if (knownData.has(image.data)) return false;
+          knownData.add(image.data);
+          return true;
+        });
+        if (addImageAttachments.length + uniqueImages.length > 20) {
+          throw new Error('图片最多添加 20 张。');
+        }
+        const totalBytes = [...addImageAttachments, ...uniqueImages]
+          .reduce((total, image) => total + Math.ceil(image.data.length * 3 / 4), 0);
+        if (totalBytes > 25 * 1024 * 1024) throw new Error('图片附件总大小不能超过 25 MB。');
+        addImageAttachments.push(...uniqueImages);
+        imageStatus.textContent = '';
+        renderAddRecordImages();
+      } catch (error) {
+        imageStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    function sendAddRecordValues() {
+      if (!addRecordCategoryId || !addRecordForm.reportValidity()) return;
+      const formData = new FormData(addRecordForm);
+      const projectId = formData.get('projectId');
+      const values = Object.fromEntries(
+        [...formData.entries()].filter(([name]) => name !== 'projectId' && !name.endsWith('__custom'))
+      );
+      addRecordFields.querySelectorAll('[data-custom-input]').forEach((select) => {
+        if (select.value === '__custom__') {
+          const customInput = document.getElementById(select.dataset.customInput);
+          values[select.name] = customInput.value;
+        }
+      });
+      addRecordError.hidden = true;
+      addRecordSaveButton.disabled = true;
+      vscode.postMessage({
+        command: addRecordMode === 'edit' ? 'update-record' : 'save-add-record',
+        categoryId: addRecordCategoryId,
+        ...(addRecordMode === 'edit' ? { recordId: editingRecordId } : {}),
+        projectId,
+        values
+      });
+    }
+
     function makeTime(value) {
       const time = document.createElement('span');
       time.className = 'record-cell record-time';
@@ -1503,6 +1884,48 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       confirmDelete.disabled = true;
       deleteDialog.showModal();
       deleteTitle.focus();
+    }
+
+    function openRunConfirmation(record) {
+      const requiresCode = Boolean(record.generatedAt);
+      const values = new Uint32Array(1);
+      if (requiresCode) window.crypto.getRandomValues(values);
+      pendingRun = {
+        recordId: record.id,
+        confirmationCode: requiresCode ? String(values[0] % 10000).padStart(4, '0') : undefined
+      };
+      runConfirmTitle.textContent = requiresCode ? '确认重新运行生成' : '确认运行生成';
+      runConfirmPrompt.replaceChildren();
+      if (requiresCode) {
+        const highlightedCode = document.createElement('span');
+        highlightedCode.className = 'delete-title-highlight';
+        highlightedCode.textContent = pendingRun.confirmationCode;
+        runConfirmPrompt.append(
+          document.createTextNode('此任务已有生成数据，请在下方输入验证码： '),
+          highlightedCode,
+          document.createTextNode(' （四位数字）确定重新运行生成！')
+        );
+      } else {
+        runConfirmPrompt.textContent = '确定运行生成吗？将使用此任务已保存的参数启动创作流程。';
+      }
+      runConfirmCodeField.hidden = !requiresCode;
+      runConfirmCode.value = '';
+      runConfirmError.textContent = '';
+      runConfirmError.hidden = true;
+      confirmRunButton.textContent = requiresCode ? '重新运行生成' : '确认生成';
+      confirmRunButton.disabled = requiresCode;
+      runConfirmDialog.showModal();
+      if (requiresCode) runConfirmCode.focus();
+      else confirmRunButton.focus();
+    }
+
+    function closeRunConfirmation() {
+      if (runConfirmDialog.open) runConfirmDialog.close();
+      pendingRun = undefined;
+      runConfirmCode.value = '';
+      runConfirmError.textContent = '';
+      runConfirmError.hidden = true;
+      confirmRunButton.disabled = false;
     }
 
     function closeDeleteDialog() {
@@ -1653,17 +2076,38 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       textarea.addEventListener('input', resizeResultTextareas);
     });
 
+    function openProjectDialog(message) {
+      editingProjectId = message.mode === 'edit' && typeof message.projectId === 'string'
+        ? message.projectId
+        : undefined;
+      projectFormTitle.textContent = editingProjectId ? '编辑项目' : '创建项目';
+      saveProjectButton.textContent = editingProjectId ? '保存' : '创建';
+      projectNameInput.value = message.projectName ?? '';
+      projectDescriptionInput.value = message.projectDescription ?? '';
+      projectFormError.textContent = '';
+      projectFormError.hidden = true;
+      saveProjectButton.disabled = false;
+      projectDialog.showModal();
+      projectNameInput.focus();
+    }
+
+    function closeProjectDialog() {
+      if (projectDialog.open) projectDialog.close();
+      editingProjectId = undefined;
+      projectFormError.textContent = '';
+      projectFormError.hidden = true;
+      saveProjectButton.disabled = false;
+    }
+
     function renderState(state) {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
-      editingWorkProjectId = state.editingWorkProject?.id;
       const hasEpisodeContentColumns = episodeContentWorkflowIds.includes(state.categoryId);
       recordsTable.classList.toggle('has-episode-content-columns', hasEpisodeContentColumns);
       recordsTable.classList.toggle('has-project-columns', state.categoryId !== undefined);
       projects = state.projects;
       recordsSection.hidden = state.viewMode !== 'records';
       projectsSection.hidden = state.viewMode !== 'projects';
-      createWorkProjectSection.hidden = state.viewMode !== 'create-project' && state.viewMode !== 'edit-project';
       renderProjectFilter([
         { value: 'all', label: '所有内容', isScopeOption: true },
         { value: '0', label: '未归属项目', isScopeOption: true },
@@ -1671,16 +2115,6 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       ], state.projectFilter);
       if (state.viewMode === 'projects') {
         renderWorkProjects(projects);
-        return;
-      }
-      if (state.viewMode === 'create-project' || state.viewMode === 'edit-project') {
-        const editingWorkProject = state.editingWorkProject;
-        document.getElementById('project-form-title').textContent = editingWorkProject ? '编辑项目' : '创建项目';
-        document.getElementById('save-project').textContent = editingWorkProject ? '保存' : '创建';
-        projectNameInput.value = editingWorkProject?.name ?? '';
-        projectDescriptionInput.value = editingWorkProject?.description ?? '';
-        projectFormError.textContent = '';
-        projectNameInput.focus();
         return;
       }
       recordList.replaceChildren();
@@ -1716,10 +2150,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         projectName.className = 'record-cell project-column';
         projectName.textContent = record.projectId === '0' ? '-' : record.projectName || '-';
         projectName.title = projectName.textContent;
-        const actions = document.createElement('div');
-        actions.className = 'record-actions row-action-column';
         const runRecord = makeButton('运行生成', 'edit-button', '运行生成' + title.textContent, () => {
-          vscode.postMessage({ command: 'run-record', recordId: record.id });
+          openRunConfirmation(record);
         });
         const editRecord = makeButton('编辑', 'edit-button', '编辑' + title.textContent, () => {
           vscode.postMessage({ command: 'select-record', recordId: record.id });
@@ -1732,13 +2164,17 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           viewContentCell.className = 'record-cell episode-content-action-column';
           const recordActions = document.createElement('div');
           recordActions.className = 'record-actions';
-          recordActions.append(runRecord, editRecord);
+          recordActions.append(runRecord, editRecord, remove);
           viewContentCell.append(recordActions);
-          actions.append(remove);
-          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), viewContentCell, actions);
+          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), viewContentCell);
         } else {
+          const actionCell = document.createElement('span');
+          actionCell.className = 'record-cell row-action-column';
+          const actions = document.createElement('div');
+          actions.className = 'record-actions';
           actions.append(runRecord, editRecord, remove);
-          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), actions);
+          actionCell.append(actions);
+          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), actionCell);
         }
         recordList.append(row);
       }
@@ -1814,15 +2250,44 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     projectForm.addEventListener('submit', (event) => {
       event.preventDefault();
       projectFormError.textContent = '';
+      projectFormError.hidden = true;
+      saveProjectButton.disabled = true;
       vscode.postMessage({
-        command: currentViewMode === 'edit-project' ? 'update-project' : 'submit-project',
-        ...(currentViewMode === 'edit-project' ? { projectId: editingWorkProjectId } : {}),
+        command: editingProjectId ? 'update-project' : 'submit-project',
+        ...(editingProjectId ? { projectId: editingProjectId } : {}),
         projectName: projectNameInput.value,
         projectDescription: projectDescriptionInput.value
       });
     });
-    document.getElementById('cancel-project-create').addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancel-project-create' });
+    document.getElementById('cancel-project-dialog').addEventListener('click', closeProjectDialog);
+    document.getElementById('close-project-dialog').addEventListener('click', closeProjectDialog);
+    projectDialog.addEventListener('close', () => {
+      editingProjectId = undefined;
+    });
+    addRecordForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendAddRecordValues();
+    });
+    document.getElementById('cancel-add-record').addEventListener('click', closeAddRecordDialog);
+    document.getElementById('close-add-record').addEventListener('click', closeAddRecordDialog);
+    addRecordDialog.addEventListener('close', () => {
+      addRecordCategoryId = undefined;
+      addRecordMode = 'add';
+      editingRecordId = undefined;
+      addImageAttachments = [];
+    });
+    window.addEventListener('paste', (event) => {
+      if (!addRecordDialog.open) return;
+      const imageArea = addRecordFields.querySelector('.add-image-area');
+      if (!imageArea || (!imageArea.matches(':hover') && !imageArea.contains(document.activeElement))) return;
+      const imageFiles = Array.from(event.clipboardData?.items ?? [])
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file) => file !== null);
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        void addRecordImageFiles(imageFiles);
+      }
     });
 
     deleteTitle.addEventListener('input', () => {
@@ -1847,8 +2312,37 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       });
     });
 
+    runConfirmCode.addEventListener('input', () => {
+      confirmRunButton.disabled = !pendingRun || pendingRun.confirmationCode !== runConfirmCode.value;
+      runConfirmError.hidden = true;
+    });
+    runConfirmForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!pendingRun) return;
+      if (pendingRun.confirmationCode && runConfirmCode.value !== pendingRun.confirmationCode) {
+        runConfirmError.textContent = '验证码不正确，请输入本次操作显示的四位数字验证码。';
+        runConfirmError.hidden = false;
+        confirmRunButton.disabled = true;
+        return;
+      }
+
+      const recordId = pendingRun.recordId;
+      pendingRun = undefined;
+      runConfirmDialog.close();
+      vscode.postMessage({ command: 'run-record', recordId });
+    });
+
     document.getElementById('cancel-delete').addEventListener('click', closeDeleteDialog);
     document.getElementById('close-delete').addEventListener('click', closeDeleteDialog);
+    document.getElementById('cancel-run-confirm').addEventListener('click', closeRunConfirmation);
+    document.getElementById('close-run-confirm').addEventListener('click', closeRunConfirmation);
+    runConfirmDialog.addEventListener('close', () => {
+      pendingRun = undefined;
+      runConfirmCode.value = '';
+      runConfirmError.textContent = '';
+      runConfirmError.hidden = true;
+      confirmRunButton.disabled = false;
+    });
     document.getElementById('cancel-project-warning').addEventListener('click', () => {
       projectWarningDialog.close();
       pendingDelete = undefined;
@@ -1899,10 +2393,29 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 
     window.addEventListener('message', (event) => {
       if (event.data.command === 'state') renderState(event.data);
+      if (event.data.command === 'open-add-record-dialog') openAddRecordDialog(event.data);
+      if (event.data.command === 'record-updated') closeAddRecordDialog();
+      if (event.data.command === 'update-record-error') {
+        addRecordSaveButton.disabled = false;
+        addRecordError.textContent = event.data.text;
+        addRecordError.hidden = false;
+      }
+      if (event.data.command === 'add-record-error') {
+        addRecordSaveButton.disabled = false;
+        addRecordError.textContent = event.data.text;
+        addRecordError.hidden = false;
+      }
+      if (event.data.command === 'add-record-saved') closeAddRecordDialog();
+      if (event.data.command === 'open-project-dialog') openProjectDialog(event.data);
+      if (event.data.command === 'project-saved') closeProjectDialog();
+      if (event.data.command === 'project-create-error') {
+        saveProjectButton.disabled = false;
+        projectFormError.textContent = event.data.text;
+        projectFormError.hidden = false;
+      }
       if (event.data.command === 'generated-episodes' && event.data.recordId === viewingEpisodeRecordId) {
         renderEpisodeContents(event.data.episodes);
       }
-      if (event.data.command === 'project-create-error') projectFormError.textContent = event.data.text;
       if (event.data.command === 'delete-success') closeDeleteDialog();
       if (event.data.command === 'generated-result' && event.data.recordId === viewingResultRecordId) {
         viewingResultType = event.data.resultType;

@@ -139,7 +139,7 @@ export function collectFormValues(
         return;
       }
 
-      const values = readFormValues(message.values, workflow);
+      const values = validateWorkflowFormValues(message.values, workflow);
       const projectId = message.projectId;
       if (!values || typeof projectId !== 'string' ||
           (projectId !== '0' && !projects.some((project) => project.id === projectId))) {
@@ -165,7 +165,7 @@ export function collectFormValues(
 }
 
 /** 校验工作流表单字段和工作流专用的附件数据。 */
-function readFormValues(value: unknown, workflow: FormWorkflow): FormValues | undefined {
+export function validateWorkflowFormValues(value: unknown, workflow: FormWorkflow): FormValues | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -779,4 +779,33 @@ function createNonce(): string {
   const values = new Uint8Array(24);
   globalThis.crypto.getRandomValues(values);
   return Array.from(values, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+/** 生成可嵌入记录列表添加对话框的工作流字段。 */
+export function renderAddRecordFields(
+  workflow: FormWorkflow,
+  projects: readonly WorkProject[],
+  initialValues: FormValues = {}
+): string {
+  const projectOptions = [
+    `<option value="0"${(initialValues.projectId ?? '0') === '0' ? ' selected' : ''}>未归属项目</option>`,
+    ...projects.map((project) =>
+      `<option value="${escapeHtml(project.id)}"${initialValues.projectId === project.id ? ' selected' : ''}>${escapeHtml(project.name)}</option>`
+    )
+  ].join('');
+  const projectField = `<div class="field">
+    <div class="field-heading"><label for="add-record-project">所属项目</label></div>
+    <select id="add-record-project" name="projectId">${projectOptions}</select>
+  </div>`;
+  const fields = workflow.fields.map((field) => renderField(field, initialValues[field.name] ?? '')).join('');
+  const imageField = workflow.supportsImageAttachments
+    ? `<section class="add-image-area" aria-label="图片附件">
+        <h3>图片附件</h3>
+        <div id="add-image-grid" class="image-grid"></div>
+        <input id="add-image-file-input" type="file" accept="image/png,image/jpeg" multiple>
+        <input id="add-image-value" name="${IMAGE_ATTACHMENTS_FIELD}" type="hidden" value="${escapeHtml(initialValues[IMAGE_ATTACHMENTS_FIELD] ?? '[]')}">
+        <p id="add-image-status" role="status" aria-live="polite"></p>
+      </section>`
+    : '';
+  return `${projectField}${fields}${imageField}`;
 }
