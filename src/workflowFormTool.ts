@@ -76,6 +76,9 @@ export class WorkflowSubmissionStore {
     recordId?: string,
     projectId = '0'
   ): void {
+    if (this.submissions.has(toolName)) {
+      throw new Error('该类型工作流已有待处理的运行请求，请等待当前请求完成后重试。');
+    }
     this.submissions.set(toolName, { values: { ...values }, recordId, projectId });
   }
 
@@ -149,6 +152,9 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     const values = submission?.values;
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
     const originalSourceFile = parseOriginalSourceFile(values?.[ORIGINAL_SOURCE_FILE_FIELD]);
+    if (submission?.runPrompt && this.workflow.supportsImageAttachments && imageAttachments.length === 0) {
+      throw new Error('图片灵感写作至少需要添加一张图片。');
+    }
     if (submission?.runPrompt && this.workflow.supportsOriginalSourceFile && !originalSourceFile) {
       throw new Error('请先上传原作 TXT 或 Markdown 文件，再运行小说重创作。');
     }

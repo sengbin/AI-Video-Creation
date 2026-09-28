@@ -619,6 +619,10 @@ suite('AI视频创作助手扩展', () => {
 
     try {
       submissions.set(workflow.toolName, values, 'saved-record-id');
+      assert.throws(
+        () => submissions.set(workflow.toolName, { taskName: '不应覆盖' }, 'other-record-id'),
+        /已有待处理的运行请求/
+      );
       const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
       const response = result.content[0];
       assert.ok(response instanceof vscode.LanguageModelTextPart);
@@ -715,6 +719,15 @@ suite('AI视频创作助手扩展', () => {
       assert.ok(imagePart instanceof vscode.LanguageModelDataPart);
       assert.strictEqual(imagePart.mimeType, 'image/png');
       assert.deepStrictEqual(Buffer.from(imagePart.data), imageBytes);
+
+      submissions.set(workflow.toolName, {
+        taskName: '缺少图片',
+        [IMAGE_ATTACHMENTS_FIELD]: '[]'
+      });
+      await assert.rejects(
+        tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token),
+        /图片灵感写作至少需要添加一张图片/
+      );
     } finally {
       cancellationSource.dispose();
       database.dispose();

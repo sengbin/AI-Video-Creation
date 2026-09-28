@@ -534,6 +534,8 @@ function createFormHtml(
     const saveButton = document.getElementById('save');
     const submitButton = document.getElementById('submit');
     const canRunPrompt = ${workflow.showRunButton !== false};
+    let isSubmitting = false;
+    let originalSourceFileReadPending = false;
     const status = document.getElementById('status');
     const imageAttachmentArea = document.getElementById('image-attachment-area');
     const projectSelect = document.getElementById('projectId');
@@ -756,6 +758,7 @@ function createFormHtml(
       const sourceValue = document.getElementById('original-source-value');
       const sourceName = document.getElementById('original-source-name');
       const sourceStatus = document.getElementById('original-source-status');
+      const selectButton = document.getElementById('select-original-source');
       const removeButton = document.getElementById('remove-original-source');
       function formatOriginalSourceSize(sizeBytes) {
         return sizeBytes < 1024 * 1024
@@ -769,11 +772,17 @@ function createFormHtml(
           : '未选择原作文件';
         removeButton.hidden = !source;
       };
-      document.getElementById('select-original-source').addEventListener('click', () => fileInput.click());
+      selectButton.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', async () => {
         const file = fileInput.files[0];
         fileInput.value = '';
-        if (!file) return;
+        if (!file || isSubmitting) return;
+        originalSourceFileReadPending = true;
+        selectButton.disabled = true;
+        removeButton.disabled = true;
+        saveButton.disabled = true;
+        if (submitButton) submitButton.disabled = true;
+        sourceStatus.textContent = '正在读取原作文件...';
         try {
           if (!/\.(?:txt|md)$/i.test(file.name)) {
             throw new Error('原作文件仅支持 TXT 或 Markdown 格式。');
@@ -793,9 +802,18 @@ function createFormHtml(
           renderOriginalSource();
         } catch (error) {
           sourceStatus.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+          originalSourceFileReadPending = false;
+          selectButton.disabled = false;
+          removeButton.disabled = !sourceValue.value;
+          if (!isSubmitting) {
+            saveButton.disabled = false;
+            if (submitButton) submitButton.disabled = false;
+          }
         }
       });
       removeButton.addEventListener('click', () => {
+        if (originalSourceFileReadPending || isSubmitting) return;
         sourceValue.value = '';
         sourceStatus.textContent = '';
         renderOriginalSource();
@@ -814,6 +832,11 @@ function createFormHtml(
     });
 
     function sendFormValues(runPrompt) {
+      if (isSubmitting) return;
+      if (originalSourceFileReadPending) {
+        status.textContent = '原作文件正在读取，请稍后再提交。';
+        return;
+      }
       if (runPrompt && !canRunPrompt) return;
       const projectId = projectSelect.value;
       if (${workflow.requiresProject === true} && !projectId) {
@@ -841,6 +864,7 @@ function createFormHtml(
       if (imageAttachmentArea) {
         values['${IMAGE_ATTACHMENTS_FIELD}'] = JSON.stringify(imageAttachments);
       }
+      isSubmitting = true;
       saveButton.disabled = true;
       if (submitButton) submitButton.disabled = true;
       status.textContent = '';
@@ -890,6 +914,7 @@ function createFormHtml(
 
     window.addEventListener('message', (event) => {
       if (event.data.command === 'validation-error') {
+        isSubmitting = false;
         saveButton.disabled = false;
         if (submitButton) submitButton.disabled = false;
         status.textContent = event.data.text;
