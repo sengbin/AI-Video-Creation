@@ -36,6 +36,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
   private panelSubscriptions: vscode.Disposable[] = [];
+  private readonly activeRecordForms = new Set<string>();
   private readonly databaseSubscription: vscode.Disposable;
 
   /**
@@ -343,17 +344,27 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
   private async addRecord(categoryId: string | undefined): Promise<void> {
     const workflow = this.findWorkflow(categoryId);
+    if (this.activeRecordForms.has(workflow.toolName)) {
+      return;
+    }
+    this.activeRecordForms.add(workflow.toolName);
+
     const formWorkflow: FormWorkflow = {
       ...workflow,
       title: `添加${workflow.title}信息`,
       notice: '填写信息后可保存，或保存并运行对应提示词。'
     };
-    const submission = await collectViewForm(
-      formWorkflow,
-      createEpisodeNumberValidationContext(this.database),
-      undefined,
-      this.database.listWorkCollections()
-    );
+    let submission: FormSubmission | undefined;
+    try {
+      submission = await collectViewForm(
+        formWorkflow,
+        createEpisodeNumberValidationContext(this.database),
+        undefined,
+        this.database.listWorkCollections()
+      );
+    } finally {
+      this.activeRecordForms.delete(workflow.toolName);
+    }
     if (!submission) {
       return;
     }
