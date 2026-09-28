@@ -1042,12 +1042,11 @@ suite('AI视频创作助手扩展', () => {
       [{ id: 'aiVideoCreation.promptRecords', type: 'webview' }]
     );
     assert.strictEqual(contributions.chatAgents.length, 1);
-    assert.strictEqual(contributions.chatSkills.length, 1);
+    assert.strictEqual(contributions.chatSkills, undefined);
     assert.strictEqual(contributions.chatPromptFiles.length, 9);
     const extensionRoot = extension.extensionUri.fsPath;
     const contributedPaths = [
       ...contributions.chatAgents,
-      ...contributions.chatSkills,
       ...contributions.chatPromptFiles
     ];
 
@@ -1202,27 +1201,13 @@ suite('AI视频创作助手扩展', () => {
     const agentMetadata = parseYaml(agentFrontmatter[1]);
     assert.strictEqual(agentMetadata.name, 'AI 视频创作');
     assert.ok(agentMetadata.description);
-    assert.ok(agentContent.includes('如果当前会话未加载该 Skill 或无法使用其规则，立即停止；不得调用参数表单工具或继续生成'));
+    assert.ok(agentContent.includes('按用户指定的目标产物和当前制作阶段执行对应 Prompt'));
+    assert.ok(agentContent.includes('区分素材事实与创作建议'));
     assert.ok(agentContent.includes('工具返回 `status: cancelled` 时停止本次任务'));
     assert.ok(agentContent.includes('返回 `status: submitted` 时从 `parameters` 读取已提交内容继续'));
     assert.ok(agentContent.includes('直接分析图片参数工具结果中的图片，不要求用户将同一图片另行附加到 Copilot 聊天'));
     assert.ok(agentContent.includes('创意写作、图片灵感写作、小说重创作、剧本创作和拍摄脚本制作'));
     assert.ok(agentContent.includes('创意写作、图片灵感写作和小说重创作使用 `chapters` 数组'));
-
-    const skillPath = path.join(extensionRoot, contributions.chatSkills[0].path);
-    const skillContent = fs.readFileSync(skillPath, 'utf8');
-    const skillFrontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(skillContent);
-    assert.ok(skillFrontmatter);
-    const skillMetadata = parseYaml(skillFrontmatter[1]);
-    assert.strictEqual(skillMetadata.name, 'ai-video-prompt-design');
-    assert.strictEqual(path.basename(path.dirname(skillPath)), skillMetadata.name);
-    assert.ok(skillMetadata.description);
-    assert.ok(skillContent.includes('编写下游提示词时，用户明确提出且彼此不冲突的要求必须完整纳入'));
-    assert.ok(skillContent.includes('拍摄脚本直接创作'));
-    assert.ok(skillContent.includes('分别编写完整、语义一致的中文提示词和英文提示词'));
-    assert.ok(!skillContent.includes('中文与英文提示词'));
-    assert.ok(!skillContent.includes('代码围栏'));
-    assert.ok(!skillContent.includes('必须使用同一个标注为'));
 
     const promptTools = [
       ['creative-writing.prompt.md', 'ai-video-creation-tools_collect_creative_writing_parameters', '## 任务'],
@@ -1249,9 +1234,6 @@ suite('AI视频创作助手扩展', () => {
       assert.ok(promptContent.includes(toolName));
       assert.ok(promptContent.includes(domainInstructionsHeading));
       assert.ok(!promptContent.includes('ai-video-prompt-design'));
-      assert.ok(!promptContent.includes('分别输出完整的中文提示词正文'));
-      assert.ok(!promptContent.includes('分别编写完整的中文提示词'));
-      assert.ok(!promptContent.includes('不添加标签、代码围栏'));
       assert.ok(promptContent.includes('## 参数工具'));
       assert.ok(!promptContent.includes('status: cancelled'));
       assert.ok(!promptContent.includes('status: submitted'));
@@ -1260,6 +1242,10 @@ suite('AI视频创作助手扩展', () => {
       if (promptName === 'character-generation.prompt.md') {
         assert.ok(promptContent.includes('角色类型和主体'));
         assert.ok(promptContent.includes('丧尸的腐坏特征'));
+        assert.ok(promptContent.includes('独立使用的中文和英文图像生成提示词'));
+      }
+      if (['scene-generation.prompt.md', 'prop-generation.prompt.md', 'effect-generation.prompt.md'].includes(promptName)) {
+        assert.ok(promptContent.includes('独立使用的中文和英文图像生成提示词'));
       }
       if (promptName === 'image-inspired-writing.prompt.md') {
         assert.ok(promptContent.includes('分别分析，不擅自建立人物或事件联系'));
@@ -1271,10 +1257,19 @@ suite('AI视频创作助手扩展', () => {
         assert.ok(promptContent.includes('原作文本、章节、梗概或可读取的文件内容是改编必需材料'));
       }
       if (promptName === 'screenplay.prompt.md') {
-        assert.ok(promptContent.includes('不擅自改成分镜、拍摄计划或整套制作材料'));
+        assert.ok(promptContent.includes('交付完整剧本包，但不扩展成逐镜头拍摄计划'));
+        assert.ok(promptContent.includes('## 剧本包交付格式'));
+        assert.ok(promptContent.includes('### 三、角色设定'));
+        assert.ok(promptContent.includes('### 四、场景设定'));
+        assert.ok(promptContent.includes('### 五、关键道具与特效'));
+        assert.ok(promptContent.includes('### 七、剧本正文'));
+        assert.ok(promptContent.includes('### 八、连续性备注'));
+        assert.ok(promptContent.includes('输出前检查'));
       }
       if (promptName === 'shooting-script.prompt.md') {
-        assert.ok(skillContent.includes('镜头时长合计应与之匹配'));
+        assert.ok(promptContent.includes('镜头时长合计应与之匹配'));
+        assert.ok(promptContent.includes('镜头编号、场次、景别/视角'));
+        assert.ok(promptContent.includes('可独立使用的视频生成提示词'));
         assert.ok(!promptContent.includes('镜头时长遵循素材或剧本'));
         assert.ok(!promptContent.includes('每个镜头均包含可单独用于视频生成的动态画面提示词'));
         assert.ok(promptContent.includes('完整的中文拍摄脚本和英文拍摄脚本'));

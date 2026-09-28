@@ -85,11 +85,6 @@
         "path": "./copilot-customizations/agents/ai-video-creation.agent.md"
       }
     ],
-    "chatSkills": [
-      {
-        "path": "./copilot-customizations/skills/ai-video-prompt-design/SKILL.md"
-      }
-    ],
     "chatPromptFiles": [
       {
         "path": "./copilot-customizations/prompts/creative-writing.prompt.md"
