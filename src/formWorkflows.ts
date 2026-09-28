@@ -24,8 +24,6 @@ export interface FormWorkflow {
   readonly showRunButton?: boolean;
   /** 参数表单是否接受用户附加图片。 */
   readonly supportsImageAttachments?: boolean;
-  /** 是否需要按合集记录集数；视觉资产工作流设为 false。 */
-  readonly supportsEpisodeNumber?: boolean;
   /** 是否以独立分集内容返回生成结果。 */
   readonly supportsEpisodeContent?: boolean;
 }
@@ -118,7 +116,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '创意写作',
     promptPath: 'copilot-customizations/prompts/creative-writing.prompt.md',
     resultType: 'content',
-    supportsEpisodeNumber: false,
     supportsEpisodeContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
@@ -136,7 +133,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '图片灵感写作',
     promptPath: 'copilot-customizations/prompts/image-inspired-writing.prompt.md',
     resultType: 'content',
-    supportsEpisodeNumber: false,
     supportsEpisodeContent: true,
     supportsImageAttachments: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据图片和已填写内容继续。保存并运行时至少添加一张图片。',
@@ -154,7 +150,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '小说重创作',
     promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     resultType: 'content',
-    supportsEpisodeNumber: false,
     supportsEpisodeContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据原作和已填写内容继续。请在 Copilot 聊天中粘贴或附上原作。',
     fields: [
@@ -172,7 +167,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '角色生成',
     promptPath: 'copilot-customizations/prompts/character-generation.prompt.md',
     resultType: 'prompt',
-    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -192,7 +186,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '场景生成',
     promptPath: 'copilot-customizations/prompts/scene-generation.prompt.md',
     resultType: 'prompt',
-    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -210,7 +203,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '道具生成',
     promptPath: 'copilot-customizations/prompts/prop-generation.prompt.md',
     resultType: 'prompt',
-    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
@@ -227,7 +219,6 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '特效生成',
     promptPath: 'copilot-customizations/prompts/effect-generation.prompt.md',
     resultType: 'prompt',
-    supportsEpisodeNumber: false,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,

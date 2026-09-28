@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EpisodeNumberRecord, WorkCollection } from './database';
+import { WorkProject } from './database';
 import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
@@ -20,23 +20,8 @@ export interface FormImageAttachment {
 export interface FormSubmission {
   readonly values: FormValues;
   readonly runPrompt: boolean;
-  /** 表单所选合集；'0' 表示未归属合集。 */
-  readonly collectionId: string;
-  /** 已选择合集时的正整数集数。 */
-  readonly episodeNumber: number | undefined;
-}
-
-/** 表单检查合集内集数冲突所需的数据。 */
-export interface EpisodeNumberValidationContext {
-  readonly records: readonly EpisodeNumberRecord[];
-  readonly currentRecordId?: string;
-  readonly initialEpisodeNumber?: number;
-  readonly findConflict: (
-    collectionId: string,
-    categoryId: string,
-    episodeNumber: number,
-    excludeRecordId?: string
-  ) => EpisodeNumberRecord | undefined;
+  /** 表单所选项目；'0' 表示未归属项目。 */
+  readonly projectId: string;
 }
 
 /**
@@ -104,9 +89,8 @@ export function parseImageAttachments(value: string | undefined): FormImageAttac
 export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
-  episodeContext: EpisodeNumberValidationContext,
   initialValues: FormValues = {},
-  collections: readonly WorkCollection[] = []
+  projects: readonly WorkProject[] = []
 ): Promise<FormSubmission | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
@@ -122,7 +106,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(workflow, initialValues, collections, episodeContext);
+  panel.webview.html = createFormHtml(workflow, initialValues, projects);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -156,65 +140,14 @@ export function collectFormValues(
       }
 
       const values = readFormValues(message.values, workflow);
-      const collectionId = message.collectionId;
-      if (!values || typeof collectionId !== 'string' ||
-          (collectionId !== '0' && !collections.some((collection) => collection.id === collectionId))) {
+      const projectId = message.projectId;
+      if (!values || typeof projectId !== 'string' ||
+          (projectId !== '0' && !projects.some((project) => project.id === projectId))) {
         void panel.webview.postMessage({
           command: 'validation-error',
           text: '表单数据无效，请检查后重新提交。'
         });
         return;
-      }
-
-      const requiresEpisodeNumber = workflow.supportsEpisodeNumber !== false && collectionId !== '0';
-      const episodeNumberValue = message.episodeNumber;
-      let episodeNumber: number | undefined;
-      if (episodeNumberValue !== undefined && episodeNumberValue !== '') {
-        if (typeof episodeNumberValue !== 'string' || !/^[0-9]+$/.test(episodeNumberValue)) {
-          void panel.webview.postMessage({
-            command: 'validation-error',
-            text: '“当前集数”必须填写大于或等于 1 的整数。'
-          });
-          return;
-        }
-        episodeNumber = Number(episodeNumberValue);
-        if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1) {
-          void panel.webview.postMessage({
-            command: 'validation-error',
-            text: '“当前集数”必须填写大于或等于 1 的整数。'
-          });
-          return;
-        }
-      }
-      if (requiresEpisodeNumber && episodeNumber === undefined) {
-        const collectionName = collections.find((collection) => collection.id === collectionId)?.name;
-        void panel.webview.postMessage({
-          command: 'validation-error',
-          text: `已选择合集“${collectionName}”，必须填写“当前集数”，且只能填写大于或等于 1 的整数。`
-        });
-        return;
-      }
-      if (!requiresEpisodeNumber && episodeNumber !== undefined) {
-        void panel.webview.postMessage({
-          command: 'validation-error',
-          text: '当前任务或未归属合集不能设置集数，请检查合集选择。'
-        });
-        return;
-      }
-      if (episodeNumber !== undefined) {
-        const conflict = episodeContext.findConflict(
-          collectionId,
-          workflow.toolName,
-          episodeNumber,
-          episodeContext.currentRecordId
-        );
-        if (conflict) {
-          void panel.webview.postMessage({
-            command: 'validation-error',
-            text: formatEpisodeNumberConflict(conflict)
-          });
-          return;
-        }
       }
 
       if (message.command === 'submit' && workflow.supportsImageAttachments &&
@@ -226,7 +159,7 @@ export function collectFormValues(
         return;
       }
 
-      finish({ values, runPrompt: message.command === 'submit', collectionId, episodeNumber });
+      finish({ values, runPrompt: message.command === 'submit', projectId });
     }));
   });
 }
@@ -285,8 +218,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function createFormHtml(
   workflow: FormWorkflow,
   initialValues: FormValues,
-  collections: readonly WorkCollection[],
-  episodeContext: EpisodeNumberValidationContext
+  projects: readonly WorkProject[]
 ): string {
   const nonce = createNonce();
   const imageAttachments = workflow.supportsImageAttachments
@@ -303,12 +235,7 @@ function createFormHtml(
   const fields = workflow.fields.map((field) =>
     renderField(field, initialValues[field.name] ?? '')
   ).join('');
-  const collectionField = renderWorkCollectionField(collections, initialValues.collectionId ?? '0');
-  const episodeNumberField = renderEpisodeNumberField(
-    workflow.supportsEpisodeNumber !== false,
-    initialValues.collectionId ?? '0',
-    episodeContext.initialEpisodeNumber
-  );
+  const projectField = renderWorkProjectField(projects, initialValues.projectId ?? '0');
   const runButton = workflow.showRunButton === false
     ? ''
     : '<button class="primary" id="submit" type="submit">保存并运行</button>';
@@ -364,21 +291,12 @@ function createFormHtml(
     label { font-size: 13px; font-weight: 600; }
     .field-label { font-size: 13px; font-weight: 600; }
     .field-description { color: var(--vscode-foreground); opacity: .82; font-size: 12px; }
-    .episode-number-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
-    .episode-number-error:empty { display: none; }
     textarea, select {
       width: 100%; resize: none; padding: 9px 10px;
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit; line-height: 1.45;
     }
-    #episode-number {
-      width: 100%; min-height: 38px; padding: 9px 10px;
-      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-      border-radius: 3px; font: inherit; line-height: 1.45;
-    }
-    #episode-number:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     input[type="number"] {
       width: 100%; min-height: 38px; padding: 9px 10px;
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
@@ -388,45 +306,45 @@ function createFormHtml(
     input[type="number"]:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     textarea { max-height: calc(17.4em + 20px); overflow-y: auto; }
     select { min-height: 38px; resize: none; }
-    .collection-picker { position: relative; width: 100%; }
-    .collection-picker-trigger {
+    .project-picker { position: relative; width: 100%; }
+    .project-picker-trigger {
       display: flex; width: 100%; min-height: 38px; align-items: center; justify-content: space-between;
       gap: 12px; padding: 9px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit; line-height: 1.45; text-align: left;
     }
-    .collection-picker-trigger.is-scope-option { color: var(--vscode-textLink-foreground); }
-    .collection-picker-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-    .collection-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .collection-picker-chevron {
+    .project-picker-trigger.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .project-picker-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    .project-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-picker-chevron {
       width: 8px; height: 8px; flex: 0 0 auto; margin: -4px 2px 0 0;
       border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg);
     }
-    .collection-picker-menu {
+    .project-picker-menu {
       position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: 0;
       max-height: min(240px, 50vh); overflow-y: auto; padding: 3px;
       background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
       border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
       border-radius: 3px; box-shadow: 0 3px 8px var(--vscode-widget-shadow);
     }
-    .collection-picker-menu[hidden] { display: none; }
-    .collection-picker-option {
+    .project-picker-menu[hidden] { display: none; }
+    .project-picker-option {
       display: block; width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
       color: var(--vscode-input-foreground); background: transparent; border: 0;
       font: inherit; line-height: 1.45; text-align: left; text-overflow: ellipsis; white-space: nowrap;
     }
-    .collection-picker-option.is-scope-option { color: var(--vscode-textLink-foreground); }
-    .collection-picker-option:hover,
-    .collection-picker-option:focus-visible {
+    .project-picker-option.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .project-picker-option:hover,
+    .project-picker-option:focus-visible {
       background: var(--vscode-list-hoverBackground);
       background: color-mix(in srgb, var(--vscode-list-hoverBackground) 90%, #FFFFFF);
       outline: none;
     }
-    .collection-picker-option[aria-selected="true"] {
+    .project-picker-option[aria-selected="true"] {
       color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-input-foreground));
       background: var(--vscode-list-inactiveSelectionBackground);
     }
-    .collection-picker-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
+    .project-picker-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
     .select-with-custom { display: flex; width: 100%; min-width: 0; gap: 8px; }
     .select-with-custom select { flex: 1 1 100%; min-width: 0; }
     .select-with-custom.has-custom select { flex: 0 1 auto; max-width: 55%; }
@@ -462,8 +380,7 @@ function createFormHtml(
     <h1>${escapeHtml(workflow.title)}</h1>
     <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
-      ${collectionField}
-      ${episodeNumberField}
+      ${projectField}
       ${imageAttachmentField}
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
@@ -484,120 +401,55 @@ function createFormHtml(
     const canRunPrompt = ${workflow.showRunButton !== false};
     const status = document.getElementById('status');
     const imageAttachmentArea = document.getElementById('image-attachment-area');
-    const collectionSelect = document.getElementById('collectionId');
-    const collectionPicker = document.getElementById('collection-picker');
-    const collectionPickerTrigger = document.getElementById('collection-picker-trigger');
-    const collectionPickerLabel = document.getElementById('collection-picker-label');
-    const collectionPickerMenu = document.getElementById('collection-picker-menu');
-    const collectionPickerOptions = Array.from(collectionPickerMenu.querySelectorAll('[role="option"]'));
-    const supportsEpisodeNumber = ${workflow.supportsEpisodeNumber !== false};
-    const episodeNumberField = document.getElementById('episode-number-field');
-    const episodeNumberInput = document.getElementById('episode-number');
-    const episodeNumberError = document.getElementById('episode-number-error');
-    const episodeNumberRecords = ${serializeForScript(episodeContext.records)};
-    const currentRecordId = ${serializeForScript(episodeContext.currentRecordId ?? '')};
-    const workflowCategoryId = ${serializeForScript(workflow.toolName)};
-
-    // 按当前合集、任务类型、集数和编辑记录标识查找本地冲突。
-    function findLocalEpisodeConflict(collectionId, rawEpisodeNumber) {
-      if (!supportsEpisodeNumber || collectionId === '0' || !/^[0-9]+$/.test(rawEpisodeNumber)) {
-        return undefined;
-      }
-      const episodeNumber = Number(rawEpisodeNumber);
-      if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1) {
-        return undefined;
-      }
-      return episodeNumberRecords.find((record) =>
-        record.collectionId === collectionId && record.categoryId === workflowCategoryId &&
-        record.episodeNumber === episodeNumber &&
-        record.id !== currentRecordId
-      );
+    const projectSelect = document.getElementById('projectId');
+    const projectPicker = document.getElementById('project-picker');
+    const projectPickerTrigger = document.getElementById('project-picker-trigger');
+    const projectPickerLabel = document.getElementById('project-picker-label');
+    const projectPickerMenu = document.getElementById('project-picker-menu');
+    const projectPickerOptions = Array.from(projectPickerMenu.querySelectorAll('[role="option"]'));
+    function closeProjectPicker(returnFocus = false) {
+      projectPickerMenu.hidden = true;
+      projectPickerTrigger.setAttribute('aria-expanded', 'false');
+      if (returnFocus) projectPickerTrigger.focus();
     }
 
-    // 将冲突记录转换为用户可直接处理的提示。
-    function formatLocalEpisodeConflict(record) {
-      return '合集“' + record.collectionName + '”的第 ' + record.episodeNumber +
-        ' 集已被同类任务“' + (record.title || '未命名任务') + '”（' + record.categoryName +
-        '）占用。请更改集数或选择其他合集。';
+    function openProjectPicker(focusIndex) {
+      projectPickerMenu.hidden = false;
+      projectPickerTrigger.setAttribute('aria-expanded', 'true');
+      const selectedIndex = projectPickerOptions.findIndex((option) => option.getAttribute('aria-selected') === 'true');
+      projectPickerOptions[Math.max(0, Math.min(focusIndex ?? selectedIndex, projectPickerOptions.length - 1))]?.focus();
     }
 
-    // 显示或隐藏集数字段，并同步集数输入框的原生校验状态。
-    function updateEpisodeNumberField() {
-      if (!supportsEpisodeNumber) return;
-      const isRequired = collectionSelect.value !== '0';
-      episodeNumberField.hidden = !isRequired;
-      episodeNumberInput.disabled = !isRequired;
-      episodeNumberInput.required = isRequired;
-      if (!isRequired) {
-        episodeNumberInput.value = '';
-        episodeNumberError.textContent = '';
-        episodeNumberInput.setCustomValidity('');
-        return;
-      }
-
-      const rawEpisodeNumber = episodeNumberInput.value;
-      let validationMessage;
-      if (!/^[0-9]+$/.test(rawEpisodeNumber) || !Number.isSafeInteger(Number(rawEpisodeNumber)) || Number(rawEpisodeNumber) < 1) {
-        validationMessage = '已选择合集，必须填写“当前集数”，且只能填写大于或等于 1 的整数。';
-      } else {
-        const conflict = findLocalEpisodeConflict(collectionSelect.value, rawEpisodeNumber);
-        if (conflict) validationMessage = formatLocalEpisodeConflict(conflict);
-      }
-      episodeNumberError.textContent = validationMessage ?? '';
-      episodeNumberInput.setCustomValidity(validationMessage ?? '');
-    }
-
-    function closeCollectionPicker(returnFocus = false) {
-      collectionPickerMenu.hidden = true;
-      collectionPickerTrigger.setAttribute('aria-expanded', 'false');
-      if (returnFocus) collectionPickerTrigger.focus();
-    }
-
-    function openCollectionPicker(focusIndex) {
-      collectionPickerMenu.hidden = false;
-      collectionPickerTrigger.setAttribute('aria-expanded', 'true');
-      const selectedIndex = collectionPickerOptions.findIndex((option) => option.getAttribute('aria-selected') === 'true');
-      collectionPickerOptions[Math.max(0, Math.min(focusIndex ?? selectedIndex, collectionPickerOptions.length - 1))]?.focus();
-    }
-
-    collectionPickerTrigger.addEventListener('click', () => {
-      if (collectionPickerMenu.hidden) openCollectionPicker();
-      else closeCollectionPicker();
+    projectPickerTrigger.addEventListener('click', () => {
+      if (projectPickerMenu.hidden) openProjectPicker();
+      else closeProjectPicker();
     });
-    collectionPickerTrigger.addEventListener('keydown', (event) => {
+    projectPickerTrigger.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        openCollectionPicker();
+        openProjectPicker();
       }
     });
-    collectionPickerOptions.forEach((option, index) => {
+    projectPickerOptions.forEach((option, index) => {
       option.addEventListener('click', () => {
-        const conflict = supportsEpisodeNumber
-          ? findLocalEpisodeConflict(option.dataset.value, episodeNumberInput.value)
-          : undefined;
-        if (conflict) {
-          episodeNumberError.textContent = formatLocalEpisodeConflict(conflict);
-          return;
-        }
-        collectionSelect.value = option.dataset.value;
-        collectionPickerLabel.textContent = option.textContent;
-        collectionPickerTrigger.classList.toggle('is-scope-option', option.classList.contains('is-scope-option'));
-        collectionPickerOptions.forEach((candidate) => {
+        projectSelect.value = option.dataset.value;
+        projectPickerLabel.textContent = option.textContent;
+        projectPickerTrigger.classList.toggle('is-scope-option', option.classList.contains('is-scope-option'));
+        projectPickerOptions.forEach((candidate) => {
           candidate.setAttribute('aria-selected', String(candidate === option));
         });
-        collectionSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        updateEpisodeNumberField();
-        closeCollectionPicker(true);
+        projectSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        closeProjectPicker(true);
       });
       option.addEventListener('keydown', (event) => {
         let nextIndex;
-        if (event.key === 'ArrowDown') nextIndex = Math.min(index + 1, collectionPickerOptions.length - 1);
+        if (event.key === 'ArrowDown') nextIndex = Math.min(index + 1, projectPickerOptions.length - 1);
         else if (event.key === 'ArrowUp') nextIndex = Math.max(index - 1, 0);
         else if (event.key === 'Home') nextIndex = 0;
-        else if (event.key === 'End') nextIndex = collectionPickerOptions.length - 1;
+        else if (event.key === 'End') nextIndex = projectPickerOptions.length - 1;
         else if (event.key === 'Escape') {
           event.preventDefault();
-          closeCollectionPicker(true);
+          closeProjectPicker(true);
           return;
         } else if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -605,20 +457,15 @@ function createFormHtml(
           return;
         } else return;
         event.preventDefault();
-        collectionPickerOptions[nextIndex].focus();
+        projectPickerOptions[nextIndex].focus();
       });
     });
-    collectionPicker.addEventListener('focusout', (event) => {
-      if (!collectionPicker.contains(event.relatedTarget)) closeCollectionPicker();
+    projectPicker.addEventListener('focusout', (event) => {
+      if (!projectPicker.contains(event.relatedTarget)) closeProjectPicker();
     });
     document.addEventListener('pointerdown', (event) => {
-      if (!collectionPicker.contains(event.target)) closeCollectionPicker();
+      if (!projectPicker.contains(event.target)) closeProjectPicker();
     });
-    if (supportsEpisodeNumber) {
-      episodeNumberInput.addEventListener('input', updateEpisodeNumberField);
-      updateEpisodeNumberField();
-    }
-
     let imageAttachments = imageAttachmentArea
       ? JSON.parse(imageAttachmentArea.dataset.initialImages)
       : [];
@@ -770,15 +617,14 @@ function createFormHtml(
 
     function sendFormValues(runPrompt) {
       if (runPrompt && !canRunPrompt) return;
-      updateEpisodeNumberField();
       if (!form.reportValidity()) {
         return;
       }
       const formData = new FormData(form);
       const values = Object.fromEntries(
-        [...formData.entries()].filter(([name]) => name !== 'collectionId' && !name.endsWith('__custom'))
+        [...formData.entries()].filter(([name]) => name !== 'projectId' && !name.endsWith('__custom'))
       );
-      const collectionId = formData.get('collectionId');
+      const projectId = formData.get('projectId');
       document.querySelectorAll('[data-custom-input]').forEach((select) => {
         if (select.value === '${CUSTOM_OPTION_VALUE}') {
           const customInput = document.getElementById(select.dataset.customInput);
@@ -794,8 +640,7 @@ function createFormHtml(
       vscode.postMessage({
         command: runPrompt ? 'submit' : 'save',
         values,
-        collectionId,
-        episodeNumber: supportsEpisodeNumber ? episodeNumberInput.value : undefined
+        projectId
       });
     }
 
@@ -841,9 +686,6 @@ function createFormHtml(
         saveButton.disabled = false;
         if (submitButton) submitButton.disabled = false;
         status.textContent = event.data.text;
-        if (supportsEpisodeNumber && collectionSelect.value !== '0') {
-          updateEpisodeNumberField();
-        }
       }
     });
   </script>
@@ -851,56 +693,33 @@ function createFormHtml(
 </html>`;
 }
 
-/** 生成固定在任务参数表单顶部的合集归属选择项。 */
-function renderWorkCollectionField(collections: readonly WorkCollection[], selectedWorkCollectionId: string): string {
+/** 生成固定在任务参数表单顶部的项目归属选择项。 */
+function renderWorkProjectField(projects: readonly WorkProject[], selectedWorkProjectId: string): string {
   const options = [
-    { id: '0', name: '未归属合集', isScopeOption: true },
-    ...collections.map((collection) => ({ id: collection.id, name: collection.name, isScopeOption: false }))
+    { id: '0', name: '未归属项目', isScopeOption: true },
+    ...projects.map((project) => ({ id: project.id, name: project.name, isScopeOption: false }))
   ];
   const nativeOptions = options.map((option) =>
-    `<option value="${escapeHtml(option.id)}"${option.id === selectedWorkCollectionId ? ' selected' : ''}>${escapeHtml(option.name)}</option>`
+    `<option value="${escapeHtml(option.id)}"${option.id === selectedWorkProjectId ? ' selected' : ''}>${escapeHtml(option.name)}</option>`
   ).join('');
   const pickerOptions = options.map((option) => {
-    const isSelected = option.id === selectedWorkCollectionId;
-    const classes = ['collection-picker-option'];
+    const isSelected = option.id === selectedWorkProjectId;
+    const classes = ['project-picker-option'];
     if (option.isScopeOption) classes.push('is-scope-option');
     return `<button class="${classes.join(' ')}" type="button" role="option" data-value="${escapeHtml(option.id)}" aria-selected="${isSelected}">${escapeHtml(option.name)}</button>`;
   }).join('');
-  const selectedOption = options.find((option) => option.id === selectedWorkCollectionId) ?? options[0];
+  const selectedOption = options.find((option) => option.id === selectedWorkProjectId) ?? options[0];
   return `<div class="field">
-    <div class="field-heading"><span class="field-label" id="collectionId-label">所属合集</span></div>
-    <div class="collection-picker" id="collection-picker">
-      <select id="collectionId" name="collectionId" hidden aria-hidden="true" tabindex="-1">${nativeOptions}</select>
-      <button class="collection-picker-trigger${selectedOption.isScopeOption ? ' is-scope-option' : ''}" id="collection-picker-trigger" type="button" aria-labelledby="collectionId-label collection-picker-label" aria-haspopup="listbox" aria-controls="collection-picker-menu" aria-expanded="false">
-        <span class="collection-picker-label" id="collection-picker-label">${escapeHtml(selectedOption.name)}</span>
-        <span class="collection-picker-chevron" aria-hidden="true"></span>
+    <div class="field-heading"><span class="field-label" id="projectId-label">所属项目</span></div>
+    <div class="project-picker" id="project-picker">
+      <select id="projectId" name="projectId" hidden aria-hidden="true" tabindex="-1">${nativeOptions}</select>
+      <button class="project-picker-trigger${selectedOption.isScopeOption ? ' is-scope-option' : ''}" id="project-picker-trigger" type="button" aria-labelledby="projectId-label project-picker-label" aria-haspopup="listbox" aria-controls="project-picker-menu" aria-expanded="false">
+        <span class="project-picker-label" id="project-picker-label">${escapeHtml(selectedOption.name)}</span>
+        <span class="project-picker-chevron" aria-hidden="true"></span>
       </button>
-      <div class="collection-picker-menu" id="collection-picker-menu" role="listbox" aria-labelledby="collectionId-label" hidden>${pickerOptions}</div>
+      <div class="project-picker-menu" id="project-picker-menu" role="listbox" aria-labelledby="projectId-label" hidden>${pickerOptions}</div>
     </div>
   </div>`;
-}
-
-/** 生成仅在任务绑定合集时显示的必填集数字段。 */
-function renderEpisodeNumberField(
-  supportsEpisodeNumber: boolean,
-  selectedCollectionId: string,
-  initialEpisodeNumber: number | undefined
-): string {
-  if (!supportsEpisodeNumber) {
-    return '';
-  }
-  const isRequired = selectedCollectionId !== '0';
-  const value = initialEpisodeNumber === undefined ? '' : String(initialEpisodeNumber);
-  return `<div class="field" id="episode-number-field"${isRequired ? '' : ' hidden'}>
-    <div class="field-heading"><label for="episode-number">当前集数</label></div>
-    <input id="episode-number" type="number" min="1" step="1" inputmode="numeric" placeholder="输入正整数" value="${escapeHtml(value)}"${isRequired ? ' required' : ' disabled'} aria-describedby="episode-number-error">
-    <p class="episode-number-error" id="episode-number-error" role="status" aria-live="polite"></p>
-  </div>`;
-}
-
-/** 生成包含合集、集数和占用任务信息的冲突说明。 */
-function formatEpisodeNumberConflict(conflict: EpisodeNumberRecord): string {
-  return `合集“${conflict.collectionName}”的第 ${conflict.episodeNumber} 集已被任务“${conflict.title ?? '未命名任务'}”（${conflict.categoryName}）占用。请更改集数或选择其他合集。`;
 }
 
 /** 转义内嵌脚本数据，避免用户文本结束脚本标签。 */

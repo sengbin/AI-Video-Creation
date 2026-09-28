@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { WorkCollection, PromptDatabase, PromptRecord } from './database';
-import { collectFormValues, EpisodeNumberValidationContext, FormSubmission } from './formPanel';
+import { WorkProject, PromptDatabase, PromptRecord } from './database';
+import { collectFormValues, FormSubmission } from './formPanel';
 import { GeneratedEpisodeContent } from './episodeContent';
 import {
   FormField,
@@ -18,9 +18,9 @@ interface ViewMessage {
   readonly categoryId?: string;
   readonly recordId?: string;
   readonly confirmationTitle?: string;
-  readonly collectionId?: string;
-  readonly collectionName?: string;
-  readonly collectionDescription?: string;
+  readonly projectId?: string;
+  readonly projectName?: string;
+  readonly projectDescription?: string;
   readonly content?: string;
   readonly contentZh?: string;
   readonly contentEn?: string;
@@ -31,9 +31,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private panel: vscode.WebviewPanel | undefined;
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
-  private selectedWorkCollectionFilter = 'all';
-  private viewMode: 'records' | 'collections' | 'create-collection' | 'edit-collection' = 'records';
-  private editingWorkCollectionId: string | undefined;
+  private selectedWorkProjectFilter = 'all';
+  private viewMode: 'records' | 'projects' | 'create-project' | 'edit-project' = 'records';
+  private editingWorkProjectId: string | undefined;
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
   private panelSubscriptions: vscode.Disposable[] = [];
@@ -76,9 +76,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    const selectedCategoryTitle = this.viewMode === 'collections' ? '合集管理'
-      : this.viewMode === 'create-collection' ? '创建合集'
-        : this.viewMode === 'edit-collection' ? '编辑合集'
+    const selectedCategoryTitle = this.viewMode === 'projects' ? '项目管理'
+      : this.viewMode === 'create-project' ? '创建项目'
+        : this.viewMode === 'edit-project' ? '编辑项目'
           : this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId)?.title ?? '请选择任务';
     const panel = vscode.window.createWebviewPanel(
       'aiVideoCreation.promptRecordsEditor',
@@ -142,8 +142,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    if (message.command === 'open-collections') {
-      this.viewMode = 'collections';
+    if (message.command === 'open-projects') {
+      this.viewMode = 'projects';
       this.selectedCategoryId = undefined;
       this.open();
       this.postState();
@@ -155,8 +155,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       return;
     }
 
-    if (message.command === 'create-collection') {
-      this.viewMode = 'create-collection';
+    if (message.command === 'create-project') {
+      this.viewMode = 'create-project';
       this.selectedCategoryId = undefined;
       this.open();
       this.postState();
@@ -174,25 +174,25 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       this.postState();
       return;
     }
-    if (message.command === 'submit-collection') {
+    if (message.command === 'submit-project') {
       try {
-        this.createWorkCollection(message.collectionName, message.collectionDescription);
+        this.createWorkProject(message.projectName, message.projectDescription);
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'collection-create-error', text: errorMessage(error) });
+        void this.panel?.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
       }
       return;
     }
-    if (message.command === 'update-collection') {
+    if (message.command === 'update-project') {
       try {
-        this.updateWorkCollection(message.collectionId, message.collectionName, message.collectionDescription);
+        this.updateWorkProject(message.projectId, message.projectName, message.projectDescription);
       } catch (error) {
-        void this.panel?.webview.postMessage({ command: 'collection-create-error', text: errorMessage(error) });
+        void this.panel?.webview.postMessage({ command: 'project-create-error', text: errorMessage(error) });
       }
       return;
     }
-    if (message.command === 'cancel-collection-create') {
-      this.viewMode = 'collections';
-      this.editingWorkCollectionId = undefined;
+    if (message.command === 'cancel-project-create') {
+      this.viewMode = 'projects';
+      this.editingWorkProjectId = undefined;
       this.postState();
       return;
     }
@@ -204,23 +204,23 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       await this.runRecord(message.recordId);
       return;
     }
-    if (message.command === 'collection-filter') {
-      if (typeof message.collectionId !== 'string' ||
-          (message.collectionId !== 'all' && message.collectionId !== '0' &&
-           !this.database.listWorkCollections().some((collection) => collection.id === message.collectionId))) {
-        throw new Error('合集筛选条件无效。');
+    if (message.command === 'project-filter') {
+      if (typeof message.projectId !== 'string' ||
+          (message.projectId !== 'all' && message.projectId !== '0' &&
+           !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
+        throw new Error('项目筛选条件无效。');
       }
-      this.selectedWorkCollectionFilter = message.collectionId;
+      this.selectedWorkProjectFilter = message.projectId;
       this.postState();
       return;
     }
-    if (message.command === 'edit-collection') {
-      await this.editWorkCollection(message.collectionId);
+    if (message.command === 'edit-project') {
+      await this.editWorkProject(message.projectId);
       return;
     }
-    if (message.command === 'delete-collection') {
+    if (message.command === 'delete-project') {
       try {
-        this.deleteWorkCollection(message.collectionId, message.confirmationTitle);
+        this.deleteWorkProject(message.projectId, message.confirmationTitle);
       } catch (error) {
         void this.panel?.webview.postMessage({ command: 'delete-error', text: errorMessage(error) });
       }
@@ -387,9 +387,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     try {
       submission = await collectViewForm(
         formWorkflow,
-        createEpisodeNumberValidationContext(this.database),
         undefined,
-        this.database.listWorkCollections()
+        this.database.listWorkProjects()
       );
     } finally {
       this.activeRecordForms.delete(workflow.toolName);
@@ -402,15 +401,14 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       title: submission.values.title,
       categoryId: workflow.toolName,
       categoryName: workflow.title,
-      collectionId: submission.collectionId,
-      episodeNumber: submission.episodeNumber,
+      projectId: submission.projectId,
       schema: workflow.fields,
       data: submission.values
     });
     this.selectedCategoryId = workflow.toolName;
     this.postState();
     if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id, submission.episodeNumber);
+      await this.runSubmittedPrompt(workflow, submission.values, record.id);
     }
   }
 
@@ -433,7 +431,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     const initialValues = {
       ...recordValues,
       title: record.title ?? recordValues.title ?? '',
-      collectionId: record.collectionId
+      projectId: record.projectId
     };
     const editWorkflow: FormWorkflow = {
       ...workflow,
@@ -444,9 +442,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     };
     const submission = await collectViewForm(
       editWorkflow,
-      createEpisodeNumberValidationContext(this.database, record.id, record.episodeNumber),
       initialValues,
-      this.database.listWorkCollections()
+      this.database.listWorkProjects()
     );
     if (!submission) {
       return;
@@ -454,8 +451,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const updatedRecord = this.database.updateRecord(record.id, {
       title: submission.values.title,
-      collectionId: submission.collectionId,
-      episodeNumber: submission.episodeNumber,
+      projectId: submission.projectId,
       schema: fields,
       data: submission.values
     });
@@ -466,7 +462,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     this.selectedCategoryId = record.categoryId;
     this.postState();
     if (submission.runPrompt) {
-      await this.runSubmittedPrompt(workflow, submission.values, record.id, submission.episodeNumber);
+      await this.runSubmittedPrompt(workflow, submission.values, record.id);
     }
   }
 
@@ -481,23 +477,21 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     const workflow = this.findWorkflow(record.categoryId);
-    await this.runSubmittedPrompt(workflow, readFormValues(record.data), record.id, record.episodeNumber);
+    await this.runSubmittedPrompt(workflow, readFormValues(record.data), record.id);
   }
 
   /** 将已提交参数及其记录标识交给对应的 Prompt 工具并启动提示词。 */
   private async runSubmittedPrompt(
     workflow: FormWorkflow,
     values: FormValues,
-    recordId: string,
-    episodeNumber: number | undefined
+    recordId: string
   ): Promise<void> {
     const record = this.database.getRecord(recordId);
     this.submissions.set(
       workflow.toolName,
       values,
       recordId,
-      record?.collectionId ?? '0',
-      episodeNumber
+      record?.projectId ?? '0'
     );
     const promptUri = vscode.Uri.joinPath(this.extensionUri, workflow.promptPath);
     try {
@@ -508,66 +502,66 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
   }
 
-  /** 校验编辑器页面提交的数据并创建合集。 */
-  private createWorkCollection(name: string | undefined, description: string | undefined): void {
+  /** 校验编辑器页面提交的数据并创建项目。 */
+  private createWorkProject(name: string | undefined, description: string | undefined): void {
     if (typeof name !== 'string' || typeof description !== 'string' || !name.trim()) {
-      throw new Error('合集名称不能为空，合集简介必须是文本。');
+      throw new Error('项目名称不能为空，项目简介必须是文本。');
     }
-    this.database.createWorkCollection({ name, description });
-    this.viewMode = 'collections';
+    this.database.createWorkProject({ name, description });
+    this.viewMode = 'projects';
     this.selectedCategoryId = undefined;
     this.postState();
   }
 
-  /** 打开指定合集的编辑页面并传入当前数据。 */
-  private editWorkCollection(collectionId: string | undefined): void {
-    if (typeof collectionId !== 'string') {
-      throw new Error('合集标识缺失。');
+  /** 打开指定项目的编辑页面并传入当前数据。 */
+  private editWorkProject(projectId: string | undefined): void {
+    if (typeof projectId !== 'string') {
+      throw new Error('项目标识缺失。');
     }
-    const collection = this.database.listWorkCollections().find((item) => item.id === collectionId);
-    if (!collection) {
-      throw new Error('合集不存在或已被删除。');
+    const project = this.database.listWorkProjects().find((item) => item.id === projectId);
+    if (!project) {
+      throw new Error('项目不存在或已被删除。');
     }
-    this.editingWorkCollectionId = collection.id;
-    this.viewMode = 'edit-collection';
+    this.editingWorkProjectId = project.id;
+    this.viewMode = 'edit-project';
     this.postState();
   }
 
-  /** 校验编辑页面提交的数据并更新合集。 */
-  private updateWorkCollection(
-    collectionId: string | undefined,
+  /** 校验编辑页面提交的数据并更新项目。 */
+  private updateWorkProject(
+    projectId: string | undefined,
     name: string | undefined,
     description: string | undefined
   ): void {
-    if (typeof collectionId !== 'string' || typeof name !== 'string' ||
+    if (typeof projectId !== 'string' || typeof name !== 'string' ||
         typeof description !== 'string' || !name.trim()) {
-      throw new Error('合集标识无效，合集名称不能为空，描述必须是文本。');
+      throw new Error('项目标识无效，项目名称不能为空，描述必须是文本。');
     }
-    if (!this.database.updateWorkCollection(collectionId, { name, description })) {
-      throw new Error('合集已不存在，无法保存修改。');
+    if (!this.database.updateWorkProject(projectId, { name, description })) {
+      throw new Error('项目已不存在，无法保存修改。');
     }
-    this.editingWorkCollectionId = undefined;
-    this.viewMode = 'collections';
+    this.editingWorkProjectId = undefined;
+    this.viewMode = 'projects';
     this.postState();
   }
 
-  /** 校验确认名称后删除合集及其关联记录。 */
-  private deleteWorkCollection(collectionId: string | undefined, confirmationTitle: string | undefined): void {
-    if (typeof collectionId !== 'string' || typeof confirmationTitle !== 'string') {
-      throw new Error('删除合集所需信息缺失。');
+  /** 校验确认名称后删除项目及其关联记录。 */
+  private deleteWorkProject(projectId: string | undefined, confirmationTitle: string | undefined): void {
+    if (typeof projectId !== 'string' || typeof confirmationTitle !== 'string') {
+      throw new Error('删除项目所需信息缺失。');
     }
-    const collection = this.database.listWorkCollections().find((item) => item.id === collectionId);
-    if (!collection) {
-      throw new Error('合集不存在或已被删除。');
+    const project = this.database.listWorkProjects().find((item) => item.id === projectId);
+    if (!project) {
+      throw new Error('项目不存在或已被删除。');
     }
-    if (confirmationTitle !== collection.name) {
-      throw new Error('输入的名称与合集名称不一致，未删除。');
+    if (confirmationTitle !== project.name) {
+      throw new Error('输入的名称与项目名称不一致，未删除。');
     }
-    if (this.selectedWorkCollectionFilter === collection.id) {
-      this.selectedWorkCollectionFilter = 'all';
+    if (this.selectedWorkProjectFilter === project.id) {
+      this.selectedWorkProjectFilter = 'all';
     }
-    if (!this.database.deleteWorkCollection(collection.id)) {
-      throw new Error('删除合集失败。');
+    if (!this.database.deleteWorkProject(project.id)) {
+      throw new Error('删除项目失败。');
     }
     void this.panel?.webview.postMessage({ command: 'delete-success' });
   }
@@ -598,24 +592,23 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     const selectedCategory = this.workflows.find((workflow) => workflow.toolName === this.selectedCategoryId);
-    const categoryTitle = this.viewMode === 'collections' ? '合集管理'
-      : this.viewMode === 'create-collection' ? '创建合集'
-        : this.viewMode === 'edit-collection' ? '编辑合集'
+    const categoryTitle = this.viewMode === 'projects' ? '项目管理'
+      : this.viewMode === 'create-project' ? '创建项目'
+        : this.viewMode === 'edit-project' ? '编辑项目'
           : selectedCategory?.title ?? '请选择任务';
     this.panel.title = categoryTitle;
-    const collections = this.database.listWorkCollections();
-    const collectionNames = new Map(collections.map((collection) => [collection.id, collection.name]));
+    const projects = this.database.listWorkProjects();
+    const projectNames = new Map(projects.map((project) => [project.id, project.name]));
     const records = (this.viewMode !== 'records' || this.selectedCategoryId === undefined
       ? []
       : this.database.listRecords(
         this.selectedCategoryId,
-        this.selectedWorkCollectionFilter === 'all' ? undefined : this.selectedWorkCollectionFilter
+        this.selectedWorkProjectFilter === 'all' ? undefined : this.selectedWorkProjectFilter
       )).map((record) => ({
       id: record.id,
       title: record.title,
-      collectionId: record.collectionId,
-      collectionName: collectionNames.get(record.collectionId),
-      episodeNumber: record.episodeNumber,
+      projectId: record.projectId,
+      projectName: projectNames.get(record.projectId),
       createdAt: record.createdAt,
       generatedAt: record.generatedAt
     }));
@@ -626,10 +619,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       categoryId: this.selectedCategoryId,
       categoryTitle,
       records,
-      collections,
-      collectionFilter: this.selectedWorkCollectionFilter,
-      editingWorkCollection: this.viewMode === 'edit-collection'
-        ? collections.find((collection) => collection.id === this.editingWorkCollectionId)
+      projects,
+      projectFilter: this.selectedWorkProjectFilter,
+      editingWorkProject: this.viewMode === 'edit-project'
+        ? projects.find((project) => project.id === this.editingWorkProjectId)
         : undefined
     });
   }
@@ -664,31 +657,15 @@ function errorMessage(error: unknown): string {
 
 async function collectViewForm(
   workflow: FormWorkflow,
-  episodeContext: EpisodeNumberValidationContext,
   initialValues?: FormValues,
-  collections: readonly WorkCollection[] = []
+  projects: readonly WorkProject[] = []
 ): Promise<FormSubmission | undefined> {
   const cancellationSource = new vscode.CancellationTokenSource();
   try {
-    return await collectFormValues(workflow, cancellationSource.token, episodeContext, initialValues, collections);
+    return await collectFormValues(workflow, cancellationSource.token, initialValues, projects);
   } finally {
     cancellationSource.dispose();
   }
-}
-
-/** 从数据库构造表单集数校验所需的当前记录快照和实时查询入口。 */
-function createEpisodeNumberValidationContext(
-  database: PromptDatabase,
-  currentRecordId?: string,
-  initialEpisodeNumber?: number
-): EpisodeNumberValidationContext {
-  return {
-    records: database.listEpisodeNumberRecords(),
-    currentRecordId,
-    initialEpisodeNumber,
-    findConflict: (collectionId, categoryId, episodeNumber, excludeRecordId) =>
-      database.findEpisodeNumberConflict(collectionId, categoryId, episodeNumber, excludeRecordId)
-  };
 }
 
 function createCategoryHtml(): string {
@@ -778,8 +755,8 @@ function createCategoryHtml(): string {
         <h2>设置</h2>
         <nav aria-label="设置">
           <div class="category-item">
-            <button id="open-collections" class="select" type="button">合集管理</button>
-            <button id="create-collection" class="add" type="button">创建</button>
+            <button id="open-projects" class="select" type="button">项目管理</button>
+            <button id="create-project" class="add" type="button">创建</button>
           </div>
           <div class="category-item">
             <button id="open-model-config" class="select" type="button">模型配置（预览）</button>
@@ -808,28 +785,28 @@ function createCategoryHtml(): string {
       button.addEventListener('lostpointercapture', clearPressed);
     }
     const settingsItem = document.querySelector('.config-card .category-item');
-    const openCollectionsButton = document.getElementById('open-collections');
-    const createCollectionButton = document.getElementById('create-collection');
+    const openProjectsButton = document.getElementById('open-projects');
+    const createProjectButton = document.getElementById('create-project');
     const modelConfigItem = document.querySelectorAll('.config-card .category-item')[1];
     const openModelConfigButton = document.getElementById('open-model-config');
     const addModelConfigButton = document.getElementById('add-model-config');
     if (!(settingsItem instanceof HTMLElement) ||
-        !(openCollectionsButton instanceof HTMLButtonElement) ||
-        !(createCollectionButton instanceof HTMLButtonElement) ||
+        !(openProjectsButton instanceof HTMLButtonElement) ||
+        !(createProjectButton instanceof HTMLButtonElement) ||
         !(modelConfigItem instanceof HTMLElement) ||
         !(openModelConfigButton instanceof HTMLButtonElement) ||
         !(addModelConfigButton instanceof HTMLButtonElement)) {
       throw new Error('设置菜单项缺失。');
     }
-    bindPressedState(openCollectionsButton, settingsItem, true);
-    bindPressedState(createCollectionButton, settingsItem, false);
+    bindPressedState(openProjectsButton, settingsItem, true);
+    bindPressedState(createProjectButton, settingsItem, false);
     bindPressedState(openModelConfigButton, modelConfigItem, true);
     bindPressedState(addModelConfigButton, modelConfigItem, false);
-    document.getElementById('open-collections').addEventListener('click', () => {
-      vscode.postMessage({ command: 'open-collections' });
+    document.getElementById('open-projects').addEventListener('click', () => {
+      vscode.postMessage({ command: 'open-projects' });
     });
-    document.getElementById('create-collection').addEventListener('click', () => {
-      vscode.postMessage({ command: 'create-collection' });
+    document.getElementById('create-project').addEventListener('click', () => {
+      vscode.postMessage({ command: 'create-project' });
     });
     const categoryStages = [
       {
@@ -943,11 +920,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     #records-table .record-row { display: table-row; min-height: 0; padding: 0; border: 0; }
     #records-table .record-row > * { display: table-cell; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); vertical-align: middle; }
     .table-header, .record-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) 96px; align-items: center; gap: 12px; }
-    .table.has-collection-columns .table-header, .table.has-collection-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 96px; }
-    .table.has-episode-columns .table-header, .table.has-episode-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(90px, .7fr) minmax(112px, 1fr) 96px; }
+    .table.has-project-columns .table-header, .table.has-project-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 96px; }
     .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1.3fr) minmax(112px, 1fr) minmax(112px, 1fr) 112px 60px; }
-    #records-table:not(.has-collection-columns) .collection-column,
-    #records-table:not(.has-episode-columns) .episode-column { display: none; }
+    #records-table:not(.has-project-columns) .project-column { display: none; }
     #records-table:not(.has-episode-content-columns) .episode-content-action-column,
     #records-table.has-episode-content-columns .row-action-column { display: none; }
     #records-table.has-episode-content-columns .episode-content-action-column { text-align: center; }
@@ -968,61 +943,61 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .record-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
     .record-actions button { flex: 0 0 auto; white-space: nowrap; }
     .filter-toolbar { display: flex; max-width: 720px; align-items: center; gap: 8px; margin-bottom: 14px; }
-    .collection-filter { position: relative; width: min(420px, 100%); min-width: 0; }
-    .collection-filter-trigger {
+    .project-filter { position: relative; width: min(420px, 100%); min-width: 0; }
+    .project-filter-trigger {
       display: flex; width: 100%; min-height: 32px; align-items: center; justify-content: space-between;
       gap: 12px; padding: 4px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; text-align: left;
     }
-    .collection-filter-trigger.is-scope-filter { color: var(--vscode-textLink-foreground); }
-    .collection-filter-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-    .collection-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .collection-filter-chevron {
+    .project-filter-trigger.is-scope-filter { color: var(--vscode-textLink-foreground); }
+    .project-filter-trigger:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+    .project-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-filter-chevron {
       width: 8px; height: 8px; flex: 0 0 auto; margin: -4px 2px 0 0;
       border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg);
     }
-    .collection-filter-menu {
+    .project-filter-menu {
       position: absolute; z-index: 5; top: calc(100% + 2px); right: 0; left: 0;
       max-height: 240px; overflow-y: auto; padding: 3px;
       background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
       border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
       border-radius: 3px; box-shadow: 0 3px 8px var(--vscode-widget-shadow);
     }
-    .collection-filter-menu[hidden] { display: none; }
-    .collection-filter-option {
+    .project-filter-menu[hidden] { display: none; }
+    .project-filter-option {
       display: block; width: 100%; min-height: 32px; padding: 5px 9px; overflow: hidden;
       color: var(--vscode-input-foreground); background: transparent; border: 0;
       text-align: left; text-overflow: ellipsis; white-space: nowrap;
     }
-    .collection-filter-option.is-scope-option { color: var(--vscode-textLink-foreground); }
-    .collection-filter-option:hover,
-    .collection-filter-option:focus-visible {
+    .project-filter-option.is-scope-option { color: var(--vscode-textLink-foreground); }
+    .project-filter-option:hover,
+    .project-filter-option:focus-visible {
       background: var(--vscode-list-hoverBackground);
       background: color-mix(in srgb, var(--vscode-list-hoverBackground) 90%, #FFFFFF);
       outline: none;
     }
-    .collection-filter-option[aria-selected="true"] {
+    .project-filter-option[aria-selected="true"] {
       color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-input-foreground));
       background: var(--vscode-list-inactiveSelectionBackground);
     }
-    .collection-filter-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
+    .project-filter-option.is-scope-option[aria-selected="true"] { color: var(--vscode-textLink-foreground); }
     .filter-button { min-height: 30px; padding: 4px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; }
-    .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) 96px; }
-    .collection-description { color: var(--vscode-descriptionForeground); }
-    .collection-form { display: grid; max-width: 760px; gap: 16px; }
-    .collection-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
-    .collection-form label { display: block; margin-bottom: 6px; font-weight: 600; }
-    .collection-form input, .collection-form textarea {
+    .project-table .table-header, .project-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(130px, .8fr) 96px; }
+    .project-description { color: var(--vscode-descriptionForeground); }
+    .project-form { display: grid; max-width: 760px; gap: 16px; }
+    .project-form h2 { margin: 0; font-size: 20px; font-weight: 600; }
+    .project-form label { display: block; margin-bottom: 6px; font-weight: 600; }
+    .project-form input, .project-form textarea {
       width: 100%; padding: 8px 10px; color: var(--vscode-input-foreground);
       background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       border-radius: 3px; font: inherit;
     }
-    .collection-form input { min-height: 36px; }
-    .collection-form textarea { min-height: 120px; resize: vertical; }
-    .collection-form input:focus, .collection-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
-    .collection-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
-    .collection-form-actions { display: flex; justify-content: flex-start; gap: 8px; }
+    .project-form input { min-height: 36px; }
+    .project-form textarea { min-height: 120px; resize: vertical; }
+    .project-form input:focus, .project-form textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
+    .project-form-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); }
+    .project-form-actions { display: flex; justify-content: flex-start; gap: 8px; }
     .delete-button {
       min-width: 44px; padding: 5px 8px; border: 0; border-radius: 3px;
       color: var(--vscode-errorForeground); background: transparent;
@@ -1116,10 +1091,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     @media (max-width: 720px) {
       main { padding: 16px 12px; }
       .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 96px; gap: 5px; }
-      .table.has-collection-columns .table-header, .table.has-collection-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 96px; gap: 5px; }
-      .table.has-episode-columns .table-header, .table.has-episode-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 64px 76px 96px; gap: 5px; }
+      .table.has-project-columns .table-header, .table.has-project-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 96px; gap: 5px; }
       .table.has-episode-content-columns .table-header, .table.has-episode-content-columns .record-row { grid-template-columns: minmax(0, 1fr) minmax(72px, .9fr) 76px 92px 52px; gap: 5px; }
-      .collection-table .table-header, .collection-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px 96px; gap: 5px; }
+      .project-table .table-header, .project-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) 86px 96px; gap: 5px; }
       .record-time { font-size: 10px; }
     }
   </style>
@@ -1128,55 +1102,55 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
   <main>
     <section id="records-section" aria-live="polite">
       <div class="filter-toolbar">
-        <div class="collection-filter" id="collection-filter">
-          <button id="collection-filter-trigger" class="collection-filter-trigger is-scope-filter" type="button"
-            role="combobox" aria-label="按合集筛选" aria-haspopup="listbox" aria-expanded="false" aria-controls="collection-filter-menu">
-            <span id="collection-filter-label" class="collection-filter-label">所有内容</span>
-            <span class="collection-filter-chevron" aria-hidden="true"></span>
+        <div class="project-filter" id="project-filter">
+          <button id="project-filter-trigger" class="project-filter-trigger is-scope-filter" type="button"
+            role="combobox" aria-label="按项目筛选" aria-haspopup="listbox" aria-expanded="false" aria-controls="project-filter-menu">
+            <span id="project-filter-label" class="project-filter-label">所有内容</span>
+            <span class="project-filter-chevron" aria-hidden="true"></span>
           </button>
-          <div id="collection-filter-menu" class="collection-filter-menu" role="listbox" aria-label="合集筛选选项" hidden></div>
+          <div id="project-filter-menu" class="project-filter-menu" role="listbox" aria-label="项目筛选选项" hidden></div>
         </div>
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>查看生成内容</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="episode-content-action-column">操作</span><span class="row-action-column"></span></div>
+          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">项目名称</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="episode-content-action-column">操作</span><span class="row-action-column"></span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
       </div>
     </section>
-    <section id="collections-section" class="collection-table" aria-live="polite" hidden>
-      <div class="table-header" role="row"><span>合集名称</span><span>合集简介</span><span>创建时间</span><span></span></div>
-      <div id="collection-list" role="rowgroup"></div>
+    <section id="projects-section" class="project-table" aria-live="polite" hidden>
+      <div class="table-header" role="row"><span>项目名称</span><span>项目简介</span><span>创建时间</span><span></span></div>
+      <div id="project-list" role="rowgroup"></div>
     </section>
-    <section id="create-collection-section" hidden>
-      <form id="collection-form" class="collection-form">
-        <h2 id="collection-form-title">创建合集</h2>
+    <section id="create-project-section" hidden>
+      <form id="project-form" class="project-form">
+        <h2 id="project-form-title">创建项目</h2>
         <div>
-          <label for="collection-name">合集名称</label>
-          <input id="collection-name" name="name" type="text" maxlength="120" required autocomplete="off">
+          <label for="project-name">项目名称</label>
+          <input id="project-name" name="name" type="text" maxlength="120" required autocomplete="off">
         </div>
         <div>
-          <label for="collection-description">合集简介</label>
-          <textarea id="collection-description" name="description" rows="5"></textarea>
+          <label for="project-description">项目简介</label>
+          <textarea id="project-description" name="description" rows="5"></textarea>
         </div>
-        <p id="collection-form-error" class="collection-form-error" role="alert"></p>
-        <div class="collection-form-actions">
-          <button id="cancel-collection-create" class="edit-button" type="button">取消</button>
-          <button id="save-collection" class="filter-button" type="submit">创建</button>
+        <p id="project-form-error" class="project-form-error" role="alert"></p>
+        <div class="project-form-actions">
+          <button id="cancel-project-create" class="edit-button" type="button">取消</button>
+          <button id="save-project" class="filter-button" type="submit">创建</button>
         </div>
       </form>
     </section>
-    <dialog id="collection-warning-dialog" data-resizable="false" aria-labelledby="collection-warning-title">
+    <dialog id="project-warning-dialog" data-resizable="false" aria-labelledby="project-warning-title">
       <div class="dialog-header">
-        <h2 id="collection-warning-title">删除合集</h2>
-        <button class="dialog-close" id="close-collection-warning" type="button" aria-label="关闭" title="关闭">×</button>
+        <h2 id="project-warning-title">删除项目</h2>
+        <button class="dialog-close" id="close-project-warning" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
       <div class="dialog-body">
-        <p class="delete-warning">此操作不可撤销。删除合集会同时删除该合集下的所有任务数据及已生成内容。</p>
-        <p id="collection-warning-name"></p>
+        <p class="delete-warning">此操作不可撤销。删除项目会同时删除该项目下的所有任务数据及已生成内容。</p>
+        <p id="project-warning-name"></p>
         <div class="dialog-actions">
-          <button id="cancel-collection-warning" type="button">取消</button>
-          <button id="continue-collection-delete" class="delete-button" type="button">继续删除</button>
+          <button id="cancel-project-warning" type="button">取消</button>
+          <button id="continue-project-delete" class="delete-button" type="button">继续删除</button>
         </div>
       </div>
       <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
@@ -1261,15 +1235,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const episodeWorkflowIds = ${JSON.stringify(workflows
-      .filter((workflow) => workflow.supportsEpisodeNumber !== false)
+    const contentWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.resultType === 'content')
       .map((workflow) => workflow.toolName))};
-    const collectionWorkflowIds = ${JSON.stringify(workflows
-      .filter((workflow) => workflow.supportsEpisodeNumber === false)
-      .map((workflow) => workflow.toolName))};
-      const contentWorkflowIds = ${JSON.stringify(workflows
-        .filter((workflow) => workflow.resultType === 'content')
-        .map((workflow) => workflow.toolName))};
     const bilingualContentWorkflowIds = ${JSON.stringify(workflows
       .filter((workflow) => workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME)
       .map((workflow) => workflow.toolName))};
@@ -1282,21 +1250,21 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const workflowTitles = ${JSON.stringify(Object.fromEntries(workflows.map((workflow) => [workflow.toolName, workflow.title])))};
     const recordList = document.getElementById('record-list');
     const recordsTable = document.getElementById('records-table');
-    const collectionList = document.getElementById('collection-list');
+    const projectList = document.getElementById('project-list');
     const recordsSection = document.getElementById('records-section');
-    const collectionsSection = document.getElementById('collections-section');
-    const createWorkCollectionSection = document.getElementById('create-collection-section');
-    const collectionForm = document.getElementById('collection-form');
-    const collectionNameInput = document.getElementById('collection-name');
-    const collectionDescriptionInput = document.getElementById('collection-description');
-    const collectionFormError = document.getElementById('collection-form-error');
-    const collectionFilter = document.getElementById('collection-filter');
-    const collectionFilterTrigger = document.getElementById('collection-filter-trigger');
-    const collectionFilterLabel = document.getElementById('collection-filter-label');
-    const collectionFilterMenu = document.getElementById('collection-filter-menu');
+    const projectsSection = document.getElementById('projects-section');
+    const createWorkProjectSection = document.getElementById('create-project-section');
+    const projectForm = document.getElementById('project-form');
+    const projectNameInput = document.getElementById('project-name');
+    const projectDescriptionInput = document.getElementById('project-description');
+    const projectFormError = document.getElementById('project-form-error');
+    const projectFilter = document.getElementById('project-filter');
+    const projectFilterTrigger = document.getElementById('project-filter-trigger');
+    const projectFilterLabel = document.getElementById('project-filter-label');
+    const projectFilterMenu = document.getElementById('project-filter-menu');
     const deleteDialog = document.getElementById('delete-dialog');
-    const collectionWarningDialog = document.getElementById('collection-warning-dialog');
-    const collectionWarningName = document.getElementById('collection-warning-name');
+    const projectWarningDialog = document.getElementById('project-warning-dialog');
+    const projectWarningName = document.getElementById('project-warning-name');
     const deleteForm = document.getElementById('delete-form');
     const deletePrompt = document.getElementById('delete-prompt');
     const deleteTitle = document.getElementById('delete-title');
@@ -1328,11 +1296,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     let viewingResultRecordId;
     let viewingEpisodeRecordId;
     let selectedCategoryId;
-    let selectedCollectionFilter = 'all';
-    let collectionFilterItems = [];
+    let selectedProjectFilter = 'all';
+    let projectFilterItems = [];
     let currentViewMode = 'records';
-    let editingWorkCollectionId;
-    let collections = [];
+    let editingWorkProjectId;
+    let projects = [];
     let viewingResultType;
     let isResultLoaded = false;
     const copyFeedbackTimers = new WeakMap();
@@ -1458,52 +1426,52 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       return time;
     }
 
-    function renderCollectionFilter(items, selectedValue) {
-      collectionFilterItems = items;
-      selectedCollectionFilter = selectedValue;
+    function renderProjectFilter(items, selectedValue) {
+      projectFilterItems = items;
+      selectedProjectFilter = selectedValue;
       const selectedItem = items.find((item) => item.value === selectedValue);
-      collectionFilterLabel.textContent = selectedItem?.label ?? '所有内容';
-      collectionFilterTrigger.classList.toggle(
+      projectFilterLabel.textContent = selectedItem?.label ?? '所有内容';
+      projectFilterTrigger.classList.toggle(
         'is-scope-filter',
         selectedItem?.isScopeOption === true
       );
-      collectionFilterMenu.replaceChildren();
+      projectFilterMenu.replaceChildren();
       for (const item of items) {
         const option = document.createElement('button');
         option.type = 'button';
-        option.className = 'collection-filter-option';
+        option.className = 'project-filter-option';
         if (item.isScopeOption) option.classList.add('is-scope-option');
         option.setAttribute('role', 'option');
         const isSelected = item.value === selectedValue;
         option.setAttribute('aria-selected', String(isSelected));
         option.textContent = item.label;
         option.addEventListener('click', () => {
-          selectedCollectionFilter = item.value;
-          collectionFilterLabel.textContent = item.label;
-          collectionFilterTrigger.classList.toggle('is-scope-filter', item.isScopeOption === true);
-          collectionFilterMenu.querySelectorAll('[role="option"]').forEach((element) => {
+          selectedProjectFilter = item.value;
+          projectFilterLabel.textContent = item.label;
+          projectFilterTrigger.classList.toggle('is-scope-filter', item.isScopeOption === true);
+          projectFilterMenu.querySelectorAll('[role="option"]').forEach((element) => {
             const isSelected = element === option;
             element.setAttribute('aria-selected', String(isSelected));
           });
-          closeCollectionFilterMenu();
-          vscode.postMessage({ command: 'collection-filter', collectionId: item.value });
+          closeProjectFilterMenu();
+          vscode.postMessage({ command: 'project-filter', projectId: item.value });
         });
-        collectionFilterMenu.append(option);
+        projectFilterMenu.append(option);
       }
     }
 
-    function openCollectionFilterMenu(focusIndex) {
-      collectionFilterMenu.hidden = false;
-      collectionFilterTrigger.setAttribute('aria-expanded', 'true');
-      const options = collectionFilterMenu.querySelectorAll('[role="option"]');
-      const selectedIndex = collectionFilterItems.findIndex((item) => item.value === selectedCollectionFilter);
+    function openProjectFilterMenu(focusIndex) {
+      projectFilterMenu.hidden = false;
+      projectFilterTrigger.setAttribute('aria-expanded', 'true');
+      const options = projectFilterMenu.querySelectorAll('[role="option"]');
+      const selectedIndex = projectFilterItems.findIndex((item) => item.value === selectedProjectFilter);
       options[Math.max(0, Math.min(focusIndex ?? selectedIndex, options.length - 1))]?.focus();
     }
 
-    function closeCollectionFilterMenu(returnFocus = false) {
-      collectionFilterMenu.hidden = true;
-      collectionFilterTrigger.setAttribute('aria-expanded', 'false');
-      if (returnFocus) collectionFilterTrigger.focus();
+    function closeProjectFilterMenu(returnFocus = false) {
+      projectFilterMenu.hidden = true;
+      projectFilterTrigger.setAttribute('aria-expanded', 'false');
+      if (returnFocus) projectFilterTrigger.focus();
     }
 
     function openDeleteDialog(record) {
@@ -1512,10 +1480,10 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       showDeleteNameDialog('记录', title);
     }
 
-    function openWorkCollectionDeleteWarning(collection) {
-      pendingDelete = { kind: 'collection', id: collection.id, title: collection.name };
-      collectionWarningName.textContent = '即将删除合集“' + collection.name + '”及其全部绑定数据。';
-      collectionWarningDialog.showModal();
+    function openWorkProjectDeleteWarning(project) {
+      pendingDelete = { kind: 'project', id: project.id, title: project.name };
+      projectWarningName.textContent = '即将删除项目“' + project.name + '”及其全部绑定数据。';
+      projectWarningDialog.showModal();
     }
 
     function showDeleteNameDialog(kind, title) {
@@ -1688,36 +1656,31 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function renderState(state) {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
-      editingWorkCollectionId = state.editingWorkCollection?.id;
-      const hasEpisodeColumns = episodeWorkflowIds.includes(state.categoryId);
+      editingWorkProjectId = state.editingWorkProject?.id;
       const hasEpisodeContentColumns = episodeContentWorkflowIds.includes(state.categoryId);
-      recordsTable.classList.toggle('has-episode-columns', hasEpisodeColumns);
       recordsTable.classList.toggle('has-episode-content-columns', hasEpisodeContentColumns);
-      recordsTable.classList.toggle(
-        'has-collection-columns',
-        hasEpisodeColumns || hasEpisodeContentColumns || collectionWorkflowIds.includes(state.categoryId)
-      );
-      collections = state.collections;
+      recordsTable.classList.toggle('has-project-columns', state.categoryId !== undefined);
+      projects = state.projects;
       recordsSection.hidden = state.viewMode !== 'records';
-      collectionsSection.hidden = state.viewMode !== 'collections';
-      createWorkCollectionSection.hidden = state.viewMode !== 'create-collection' && state.viewMode !== 'edit-collection';
-      renderCollectionFilter([
+      projectsSection.hidden = state.viewMode !== 'projects';
+      createWorkProjectSection.hidden = state.viewMode !== 'create-project' && state.viewMode !== 'edit-project';
+      renderProjectFilter([
         { value: 'all', label: '所有内容', isScopeOption: true },
-        { value: '0', label: '未归属合集', isScopeOption: true },
-        ...collections.map((collection) => ({ value: collection.id, label: collection.name }))
-      ], state.collectionFilter);
-      if (state.viewMode === 'collections') {
-        renderWorkCollections(collections);
+        { value: '0', label: '未归属项目', isScopeOption: true },
+        ...projects.map((project) => ({ value: project.id, label: project.name }))
+      ], state.projectFilter);
+      if (state.viewMode === 'projects') {
+        renderWorkProjects(projects);
         return;
       }
-      if (state.viewMode === 'create-collection' || state.viewMode === 'edit-collection') {
-        const editingWorkCollection = state.editingWorkCollection;
-        document.getElementById('collection-form-title').textContent = editingWorkCollection ? '编辑合集' : '创建合集';
-        document.getElementById('save-collection').textContent = editingWorkCollection ? '保存' : '创建';
-        collectionNameInput.value = editingWorkCollection?.name ?? '';
-        collectionDescriptionInput.value = editingWorkCollection?.description ?? '';
-        collectionFormError.textContent = '';
-        collectionNameInput.focus();
+      if (state.viewMode === 'create-project' || state.viewMode === 'edit-project') {
+        const editingWorkProject = state.editingWorkProject;
+        document.getElementById('project-form-title').textContent = editingWorkProject ? '编辑项目' : '创建项目';
+        document.getElementById('save-project').textContent = editingWorkProject ? '保存' : '创建';
+        projectNameInput.value = editingWorkProject?.name ?? '';
+        projectDescriptionInput.value = editingWorkProject?.description ?? '';
+        projectFormError.textContent = '';
+        projectNameInput.focus();
         return;
       }
       recordList.replaceChildren();
@@ -1749,15 +1712,10 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           }
         });
         titleCell.append(title);
-        const collectionName = document.createElement('span');
-        collectionName.className = 'record-cell collection-column';
-        collectionName.textContent = record.collectionId === '0' ? '-' : record.collectionName || '-';
-        collectionName.title = collectionName.textContent;
-        const episodeNumber = document.createElement('span');
-        episodeNumber.className = 'record-cell episode-column';
-        episodeNumber.textContent = record.collectionId === '0' || !record.episodeNumber
-          ? '-'
-          : '第 ' + record.episodeNumber + ' 集';
+        const projectName = document.createElement('span');
+        projectName.className = 'record-cell project-column';
+        projectName.textContent = record.projectId === '0' ? '-' : record.projectName || '-';
+        projectName.title = projectName.textContent;
         const actions = document.createElement('div');
         actions.className = 'record-actions row-action-column';
         const runRecord = makeButton('运行生成', 'edit-button', '运行生成' + title.textContent, () => {
@@ -1777,69 +1735,69 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           recordActions.append(runRecord, editRecord);
           viewContentCell.append(recordActions);
           actions.append(remove);
-          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), viewContentCell, actions);
+          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), viewContentCell, actions);
         } else {
           actions.append(runRecord, editRecord, remove);
-          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), actions);
+          row.append(titleCell, projectName, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), actions);
         }
         recordList.append(row);
       }
     }
 
-    function renderWorkCollections(items) {
-      collectionList.replaceChildren();
+    function renderWorkProjects(items) {
+      projectList.replaceChildren();
       if (items.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = '暂无合集';
-        collectionList.append(empty);
+        empty.textContent = '暂无项目';
+        projectList.append(empty);
         return;
       }
-      for (const collection of items) {
+      for (const project of items) {
         const row = document.createElement('div');
-        row.className = 'record-row collection-row';
+        row.className = 'record-row project-row';
         row.setAttribute('role', 'row');
         const name = document.createElement('span');
         name.className = 'record-cell record-title';
-        name.textContent = collection.name;
-        name.title = collection.name;
+        name.textContent = project.name;
+        name.title = project.name;
         const description = document.createElement('span');
-        description.className = 'record-cell collection-description';
-        description.textContent = collection.description;
-        description.title = collection.description;
+        description.className = 'record-cell project-description';
+        description.textContent = project.description;
+        description.title = project.description;
         const actions = document.createElement('div');
         actions.className = 'record-actions';
-        const edit = makeButton('编辑', 'edit-button', '编辑合集' + collection.name, () => {
-          vscode.postMessage({ command: 'edit-collection', collectionId: collection.id });
+        const edit = makeButton('编辑', 'edit-button', '编辑项目' + project.name, () => {
+          vscode.postMessage({ command: 'edit-project', projectId: project.id });
         });
-        const remove = makeButton('删除', 'delete-button', '删除合集' + collection.name, () => {
-          openWorkCollectionDeleteWarning(collection);
+        const remove = makeButton('删除', 'delete-button', '删除项目' + project.name, () => {
+          openWorkProjectDeleteWarning(project);
         });
         actions.append(edit, remove);
-        row.append(name, description, makeTime(collection.createdAt), actions);
-        collectionList.append(row);
+        row.append(name, description, makeTime(project.createdAt), actions);
+        projectList.append(row);
       }
     }
 
-    collectionFilterTrigger.addEventListener('click', () => {
-      if (collectionFilterMenu.hidden) {
-        openCollectionFilterMenu();
+    projectFilterTrigger.addEventListener('click', () => {
+      if (projectFilterMenu.hidden) {
+        openProjectFilterMenu();
       } else {
-        closeCollectionFilterMenu();
+        closeProjectFilterMenu();
       }
     });
-    collectionFilterTrigger.addEventListener('keydown', (event) => {
+    projectFilterTrigger.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        openCollectionFilterMenu();
+        openProjectFilterMenu();
       }
     });
-    collectionFilterMenu.addEventListener('keydown', (event) => {
-      const options = [...collectionFilterMenu.querySelectorAll('[role="option"]')];
+    projectFilterMenu.addEventListener('keydown', (event) => {
+      const options = [...projectFilterMenu.querySelectorAll('[role="option"]')];
       const currentIndex = options.indexOf(document.activeElement);
       if (event.key === 'Escape') {
         event.preventDefault();
-        closeCollectionFilterMenu(true);
+        closeProjectFilterMenu(true);
       } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const offset = event.key === 'ArrowDown' ? 1 : -1;
@@ -1850,21 +1808,21 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       }
     });
     document.addEventListener('pointerdown', (event) => {
-      if (!collectionFilter.contains(event.target)) closeCollectionFilterMenu();
+      if (!projectFilter.contains(event.target)) closeProjectFilterMenu();
     });
 
-    collectionForm.addEventListener('submit', (event) => {
+    projectForm.addEventListener('submit', (event) => {
       event.preventDefault();
-      collectionFormError.textContent = '';
+      projectFormError.textContent = '';
       vscode.postMessage({
-        command: currentViewMode === 'edit-collection' ? 'update-collection' : 'submit-collection',
-        ...(currentViewMode === 'edit-collection' ? { collectionId: editingWorkCollectionId } : {}),
-        collectionName: collectionNameInput.value,
-        collectionDescription: collectionDescriptionInput.value
+        command: currentViewMode === 'edit-project' ? 'update-project' : 'submit-project',
+        ...(currentViewMode === 'edit-project' ? { projectId: editingWorkProjectId } : {}),
+        projectName: projectNameInput.value,
+        projectDescription: projectDescriptionInput.value
       });
     });
-    document.getElementById('cancel-collection-create').addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancel-collection-create' });
+    document.getElementById('cancel-project-create').addEventListener('click', () => {
+      vscode.postMessage({ command: 'cancel-project-create' });
     });
 
     deleteTitle.addEventListener('input', () => {
@@ -1883,26 +1841,26 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
 
       confirmDelete.disabled = true;
       vscode.postMessage({
-        command: pendingDelete.kind === 'collection' ? 'delete-collection' : 'delete-record',
-        ...(pendingDelete.kind === 'collection' ? { collectionId: pendingDelete.id } : { recordId: pendingDelete.id }),
+        command: pendingDelete.kind === 'project' ? 'delete-project' : 'delete-record',
+        ...(pendingDelete.kind === 'project' ? { projectId: pendingDelete.id } : { recordId: pendingDelete.id }),
         confirmationTitle: deleteTitle.value
       });
     });
 
     document.getElementById('cancel-delete').addEventListener('click', closeDeleteDialog);
     document.getElementById('close-delete').addEventListener('click', closeDeleteDialog);
-    document.getElementById('cancel-collection-warning').addEventListener('click', () => {
-      collectionWarningDialog.close();
+    document.getElementById('cancel-project-warning').addEventListener('click', () => {
+      projectWarningDialog.close();
       pendingDelete = undefined;
     });
-    document.getElementById('close-collection-warning').addEventListener('click', () => {
-      collectionWarningDialog.close();
+    document.getElementById('close-project-warning').addEventListener('click', () => {
+      projectWarningDialog.close();
       pendingDelete = undefined;
     });
-    document.getElementById('continue-collection-delete').addEventListener('click', () => {
-      if (!pendingDelete || pendingDelete.kind !== 'collection') return;
-      collectionWarningDialog.close();
-      showDeleteNameDialog('合集', pendingDelete.title);
+    document.getElementById('continue-project-delete').addEventListener('click', () => {
+      if (!pendingDelete || pendingDelete.kind !== 'project') return;
+      projectWarningDialog.close();
+      showDeleteNameDialog('项目', pendingDelete.title);
     });
     document.getElementById('close-result').addEventListener('click', closeResultDialog);
     document.getElementById('close-episode-content').addEventListener('click', closeEpisodeContentDialog);
@@ -1935,7 +1893,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       deleteTitle.value = '';
       confirmDelete.disabled = true;
     });
-    collectionWarningDialog.addEventListener('cancel', () => {
+    projectWarningDialog.addEventListener('cancel', () => {
       pendingDelete = undefined;
     });
 
@@ -1944,7 +1902,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       if (event.data.command === 'generated-episodes' && event.data.recordId === viewingEpisodeRecordId) {
         renderEpisodeContents(event.data.episodes);
       }
-      if (event.data.command === 'collection-create-error') collectionFormError.textContent = event.data.text;
+      if (event.data.command === 'project-create-error') projectFormError.textContent = event.data.text;
       if (event.data.command === 'delete-success') closeDeleteDialog();
       if (event.data.command === 'generated-result' && event.data.recordId === viewingResultRecordId) {
         viewingResultType = event.data.resultType;

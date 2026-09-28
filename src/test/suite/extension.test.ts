@@ -39,7 +39,8 @@ suite('AI视频创作助手扩展', () => {
         data: { title: '示例记录', genre: '科幻' }
       });
 
-      assert.ok(fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
+      assert.ok(fs.existsSync(path.join(storagePath, 'creative-projects.sqlite')));
+      assert.ok(!fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
       assert.deepStrictEqual(database.getRecord(record.id), record);
       assert.strictEqual(record.generatedAt, undefined);
       assert.deepStrictEqual(
@@ -60,7 +61,7 @@ suite('AI视频创作助手扩展', () => {
       assert.ok(savedResult?.generatedAt);
       const updatedRecord = database.updateRecord(record.id, {
         title: '修改后的记录',
-        collectionId: record.collectionId,
+        projectId: record.projectId,
         schema: record.schema,
         data: { title: '修改后的记录', genre: '奇幻' }
       });
@@ -78,120 +79,76 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('合集可筛选记录并在删除时级联清理绑定数据', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collections-'));
+  test('项目可筛选记录并在删除时级联清理绑定数据', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-projects-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     try {
-      const collection = database.createWorkCollection({ name: '短片主题', description: '同一主题下的作品集合' });
+      const project = database.createWorkProject({ name: '短片主题', description: '同一主题下的作品集合' });
       const boundRecord = database.saveRecord({
-        title: '合集记录',
+        title: '项目记录',
         categoryId: 'story',
         categoryName: '文字作品',
-        collectionId: collection.id,
+        projectId: project.id,
         schema: [],
-        data: { title: '合集记录' }
+        data: { title: '项目记录' }
       });
       const unassignedRecord = database.saveRecord({
         title: '独立记录',
         categoryId: 'story',
         categoryName: '文字作品',
-        collectionId: '0',
+        projectId: '0',
         schema: [],
         data: { title: '独立记录' }
       });
 
-      assert.strictEqual(boundRecord.collectionId, collection.id);
-      assert.deepStrictEqual(database.listRecords(undefined, collection.id), [boundRecord]);
+      assert.strictEqual(boundRecord.projectId, project.id);
+      assert.deepStrictEqual(database.listRecords(undefined, project.id), [boundRecord]);
       assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
-      assert.throws(() => database.createWorkCollection({ name: '短片主题', description: '' }), /名称已存在/);
-      assert.strictEqual(database.deleteWorkCollection(collection.id), true);
+      assert.throws(() => database.createWorkProject({ name: '短片主题', description: '' }), /名称已存在/);
+      assert.strictEqual(database.deleteWorkProject(project.id), true);
       assert.strictEqual(database.getRecord(boundRecord.id), undefined);
       assert.deepStrictEqual(database.listRecords(undefined, '0'), [unassignedRecord]);
-      assert.deepStrictEqual(database.listWorkCollections(), []);
+      assert.deepStrictEqual(database.listWorkProjects(), []);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
   });
 
-  test('合集集数必须是正整数且唯一，改绑时检查目标合集冲突', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-episode-number-'));
-    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+  test('项目任务不绑定集数且允许同类记录共存，作品分集编号仍保存在独立表中', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-project-records-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
     try {
-      const firstCollection = database.createWorkCollection({ name: '第一部作品', description: '' });
-      const secondCollection = database.createWorkCollection({ name: '第二部作品', description: '' });
+      const project = database.createWorkProject({ name: '短片项目', description: '' });
       const firstRecord = database.saveRecord({
         title: '相遇',
         categoryId: 'story',
         categoryName: '创意写作',
-        collectionId: firstCollection.id,
-        episodeNumber: 1,
+        projectId: project.id,
         schema: [],
         data: { title: '相遇' }
       });
-      const screenplayRecord = database.saveRecord({
-        title: '相遇剧本',
-        categoryId: 'screenplay',
-        categoryName: '剧本创作',
-        collectionId: firstCollection.id,
-        episodeNumber: 1,
-        schema: [],
-        data: { title: '相遇剧本' }
-      });
-      const otherCollectionRecord = database.saveRecord({
-        title: '序章',
+      const duplicateCategoryRecord = database.saveRecord({
+        title: '相遇的另一个版本',
         categoryId: 'story',
         categoryName: '创意写作',
-        collectionId: secondCollection.id,
-        episodeNumber: 1,
+        projectId: project.id,
         schema: [],
-        data: { title: '序章' }
+        data: { title: '相遇的另一个版本' }
       });
 
-      assert.strictEqual(database.getRecord(firstRecord.id)?.episodeNumber, 1);
-      assert.strictEqual(screenplayRecord.episodeNumber, 1);
-      assert.strictEqual(database.findEpisodeNumberConflict(firstCollection.id, 'screenplay', 1)?.id, screenplayRecord.id);
-      assert.strictEqual(database.findEpisodeNumberConflict(firstCollection.id, 'story', 1)?.id, firstRecord.id);
-      assert.throws(() => database.saveRecord({
-        title: '重复集数',
-        categoryId: 'story',
-        categoryName: '创意写作',
-        collectionId: firstCollection.id,
-        episodeNumber: 1,
-        schema: [],
-        data: { title: '重复集数' }
-      }), /第一部作品.*第 1 集.*相遇.*创意写作/);
-      assert.throws(() => database.updateRecord(otherCollectionRecord.id, {
-        title: '序章',
-        collectionId: firstCollection.id,
-        episodeNumber: 1,
-        schema: [],
-        data: { title: '序章' }
-      }), /第一部作品.*第 1 集.*相遇/);
-      assert.throws(() => database.saveRecord({
-        title: '小数集数',
-        categoryId: 'story',
-        categoryName: '创意写作',
-        collectionId: firstCollection.id,
-        episodeNumber: 1.5,
-        schema: [],
-        data: { title: '小数集数' }
-      }), /大于或等于 1 的整数/);
+      assert.deepStrictEqual(database.listRecords('story', project.id), [duplicateCategoryRecord, firstRecord]);
 
-      const visualAsset = database.saveRecord({
-        title: '主角设定',
-        categoryId: 'character',
-        categoryName: '角色生成',
-        collectionId: firstCollection.id,
-        schema: [],
-        data: { title: '主角设定' }
-      });
-      assert.strictEqual(visualAsset.episodeNumber, undefined);
-      assert.deepStrictEqual(
-        new Set(database.listEpisodeNumberRecords()
-          .map((record) => `${record.collectionName}:${record.categoryId}:${record.episodeNumber}`)),
-        new Set(['第一部作品:story:1', '第一部作品:screenplay:1', '第二部作品:story:1'])
-      );
+      const connection = new DatabaseSync(path.join(storagePath, 'creative-projects.sqlite'));
+      try {
+        const taskColumns = connection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        const episodeColumns = connection.prepare('PRAGMA table_info(generated_episode_contents)').all() as { name: string }[];
+        assert.ok(!taskColumns.some((column) => column.name === 'episode_number'));
+        assert.ok(episodeColumns.some((column) => column.name === 'episode_number'));
+      } finally {
+        connection.close();
+      }
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -233,7 +190,7 @@ suite('AI视频创作助手扩展', () => {
 
       const updatedRecord = database.updateRecord(record.id, {
         title: '编辑后的图片创作记录',
-        collectionId: record.collectionId,
+        projectId: record.projectId,
         schema: workflow.fields,
         data: { ...restoredValues, title: '编辑后的图片创作记录' }
       });
@@ -275,7 +232,7 @@ suite('AI视频创作助手扩展', () => {
       const [record] = database.listRecords('legacy-category');
       assert.strictEqual(record.id, 'legacy-id');
       assert.strictEqual(record.title, undefined);
-      assert.strictEqual(record.collectionId, '0');
+      assert.strictEqual(record.projectId, '0');
       assert.strictEqual(record.generatedAt, undefined);
       assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
       assert.strictEqual(record.generatedResultEnglish, undefined);
@@ -323,8 +280,8 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('能够将旧版合集结构迁移并保留原有关联', async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collection-migration-'));
+  test('能够将旧版项目结构迁移并保留原有关联', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-project-migration-'));
     const storagePath = path.join(temporaryDirectory, 'globalStorage');
     fs.mkdirSync(storagePath);
     const databasePath = path.join(storagePath, 'prompt-records.sqlite');
@@ -338,7 +295,7 @@ suite('AI视频创作助手扩展', () => {
         updated_at TEXT NOT NULL
       );
       INSERT INTO episodes VALUES (
-        'legacy-collection-id', '旧作品合集', '已保存的合集简介',
+        'legacy-project-id', '旧作品项目', '已保存的项目简介',
         '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
       );
       CREATE TABLE prompt_records (
@@ -356,7 +313,7 @@ suite('AI视频创作助手扩展', () => {
         updated_at TEXT
       );
       INSERT INTO prompt_records VALUES (
-        'legacy-record-id', '旧故事章节', 'story', '故事创作', 'legacy-collection-id',
+        'legacy-record-id', '旧故事章节', 'story', '故事创作', 'legacy-project-id',
         '[]', '{"title":"旧故事章节"}', NULL, NULL, '保留的正文',
         '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
       );
@@ -365,25 +322,105 @@ suite('AI视频创作助手扩展', () => {
 
     const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
     try {
-      assert.deepStrictEqual(database.listWorkCollections(), [{
-        id: 'legacy-collection-id',
-        name: '旧作品合集',
-        description: '已保存的合集简介',
+      assert.deepStrictEqual(database.listWorkProjects(), [{
+        id: 'legacy-project-id',
+        name: '旧作品项目',
+        description: '已保存的项目简介',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z'
       }]);
       const record = database.getRecord('legacy-record-id');
-      assert.strictEqual(record?.collectionId, 'legacy-collection-id');
+      assert.strictEqual(record?.projectId, 'legacy-project-id');
       assert.strictEqual(record?.generatedResultContent, '保留的正文');
       assert.strictEqual(record?.generatedAt, undefined);
-      assert.deepStrictEqual(database.listRecords('story', 'legacy-collection-id'), [record]);
-      const migratedConnection = new DatabaseSync(databasePath);
+      assert.deepStrictEqual(database.listRecords('story', 'legacy-project-id'), [record]);
+      const migratedDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
+      assert.ok(fs.existsSync(migratedDatabasePath));
+      assert.ok(!fs.existsSync(databasePath));
+      const migratedConnection = new DatabaseSync(migratedDatabasePath);
       try {
         const promptColumns = migratedConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
-        const collectionColumns = migratedConnection.prepare('PRAGMA table_info(collections)').all() as { name: string }[];
+        const projectColumns = migratedConnection.prepare('PRAGMA table_info(projects)').all() as { name: string }[];
         assert.ok(promptColumns.some((column) => column.name === 'generated_at'));
         assert.ok(!promptColumns.some((column) => column.name === 'updated_at'));
-        assert.ok(collectionColumns.some((column) => column.name === 'updated_at'));
+        assert.ok(projectColumns.some((column) => column.name === 'updated_at'));
+      } finally {
+        migratedConnection.close();
+      }
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('迁移合集数据库时保留项目关联并移除旧任务集数字段', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-collection-migration-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    fs.mkdirSync(storagePath);
+    const legacyDatabasePath = path.join(storagePath, 'prompt-records.sqlite');
+    const legacyConnection = new DatabaseSync(legacyDatabasePath);
+    legacyConnection.exec(`
+      CREATE TABLE collections (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO collections VALUES (
+        'collection-id', '旧合集名称', '原项目简介',
+        '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'
+      );
+      CREATE TABLE prompt_records (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT,
+        category_id TEXT NOT NULL,
+        category_name TEXT NOT NULL,
+        collection_id TEXT NOT NULL,
+        episode_number INTEGER,
+        schema_json TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        generated_result_chinese TEXT,
+        generated_result_english TEXT,
+        generated_result_content TEXT,
+        created_at TEXT NOT NULL,
+        generated_at TEXT
+      );
+      CREATE UNIQUE INDEX prompt_records_collection_task_episode_unique_idx
+        ON prompt_records (collection_id, category_id, episode_number)
+        WHERE collection_id <> '0' AND episode_number IS NOT NULL;
+      INSERT INTO prompt_records VALUES (
+        'collection-record-id', '旧任务', 'story', '创意写作', 'collection-id', 3,
+        '[]', '{"title":"旧任务"}', NULL, NULL, NULL,
+        '2026-01-03T00:00:00.000Z', NULL
+      );
+    `);
+    legacyConnection.close();
+
+    const database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+    try {
+      assert.strictEqual(database.listWorkProjects()[0].id, 'collection-id');
+      assert.strictEqual(database.listWorkProjects()[0].name, '旧合集名称');
+      assert.strictEqual(database.getRecord('collection-record-id')?.projectId, 'collection-id');
+
+      const migratedDatabasePath = path.join(storagePath, 'creative-projects.sqlite');
+      assert.ok(fs.existsSync(migratedDatabasePath));
+      assert.ok(!fs.existsSync(legacyDatabasePath));
+      const migratedConnection = new DatabaseSync(migratedDatabasePath);
+      try {
+        const taskColumns = migratedConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        const projectTables = migratedConnection.prepare(`
+          SELECT name FROM sqlite_master WHERE type = 'table'
+        `).all() as { name: string }[];
+        const uniqueIndexes = migratedConnection.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'index' AND tbl_name = 'prompt_records' AND sql LIKE '%episode_number%'
+        `).all() as { name: string }[];
+        assert.ok(taskColumns.some((column) => column.name === 'project_id'));
+        assert.ok(!taskColumns.some((column) => column.name === 'collection_id' || column.name === 'episode_number'));
+        assert.ok(projectTables.some((table) => table.name === 'projects'));
+        assert.ok(!projectTables.some((table) => table.name === 'collections'));
+        assert.deepStrictEqual(uniqueIndexes, []);
       } finally {
         migratedConnection.close();
       }
@@ -805,7 +842,6 @@ suite('AI视频创作助手扩展', () => {
     const episodeContentWorkflows = formWorkflows.filter((workflow) => workflow.supportsEpisodeContent);
     assert.strictEqual(episodeContentWorkflows.length, 3);
     for (const workflow of episodeContentWorkflows) {
-      assert.strictEqual(workflow.supportsEpisodeNumber, false);
       const episodeDuration = workflow.fields.find((field) => field.name === 'episodeDurationSeconds');
       const maxEpisodes = workflow.fields.find((field) => field.name === 'maxEpisodes');
       assert.strictEqual(episodeDuration?.inputType, 'number');

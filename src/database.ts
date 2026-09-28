@@ -1,17 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, renameSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
 import { GeneratedEpisodeContent, MAX_GENERATED_EPISODES } from './episodeContent';
 
-/** 新增一条提示词记录及其合集归属。 */
+/** 新增一条提示词记录及其项目归属。 */
 export interface NewPromptRecord {
   readonly title: string;
   readonly categoryId: string;
   readonly categoryName: string;
-  /** 合集标识；缺省或 '0' 表示未归属合集。 */
-  readonly collectionId?: string;
-  /** 记录所属合集中的集数。 */
-  readonly episodeNumber?: number;
+  /** 项目标识；缺省或 '0' 表示未归属项目。 */
+  readonly projectId?: string;
   readonly schema: unknown;
   readonly data: unknown;
 }
@@ -22,9 +21,8 @@ export interface PromptRecord {
   readonly title: string | undefined;
   readonly categoryId: string;
   readonly categoryName: string;
-  /** 合集标识；'0' 表示未归属合集。 */
-  readonly collectionId: string;
-  readonly episodeNumber: number | undefined;
+  /** 项目标识；'0' 表示未归属项目。 */
+  readonly projectId: string;
   readonly schema: unknown;
   readonly data: unknown;
   readonly generatedResultChinese: string | undefined;
@@ -37,16 +35,14 @@ export interface PromptRecord {
 /** 修改提示词记录时可更新的字段。 */
 export interface UpdatedPromptRecord {
   readonly title: string;
-  /** 新合集标识；'0' 表示未归属合集。 */
-  readonly collectionId: string;
-  /** 更新后的集数。 */
-  readonly episodeNumber?: number;
+  /** 新项目标识；'0' 表示未归属项目。 */
+  readonly projectId: string;
   readonly schema: unknown;
   readonly data: unknown;
 }
 
-/** 表示合集管理列表中的一条合集。 */
-export interface WorkCollection {
+/** 表示项目管理列表中的一条项目。 */
+export interface WorkProject {
   readonly id: string;
   readonly name: string;
   readonly description: string;
@@ -54,19 +50,8 @@ export interface WorkCollection {
   readonly updatedAt: string;
 }
 
-/** 表示合集内已占用集数的任务记录。 */
-export interface EpisodeNumberRecord {
-  readonly id: string;
-  readonly title: string | undefined;
-  readonly categoryId: string;
-  readonly categoryName: string;
-  readonly collectionId: string;
-  readonly collectionName: string;
-  readonly episodeNumber: number;
-}
-
-/** 创建合集时需要保存的字段。 */
-export interface NewWorkCollection {
+/** 创建项目时需要保存的字段。 */
+export interface NewWorkProject {
   readonly name: string;
   readonly description: string;
 }
@@ -76,8 +61,7 @@ interface StoredPromptRecord {
   readonly title: string | null;
   readonly category_id: string;
   readonly category_name: string;
-  readonly collection_id: string;
-  readonly episode_number: number | null;
+  readonly project_id: string;
   readonly schema_json: string;
   readonly data_json: string;
   readonly generated_result_chinese: string | null;
@@ -103,9 +87,15 @@ export class PromptDatabase implements vscode.Disposable {
   static async open(storageUri: vscode.Uri): Promise<PromptDatabase> {
     await vscode.workspace.fs.createDirectory(storageUri);
 
-    const connection = new DatabaseSync(
-      vscode.Uri.joinPath(storageUri, 'prompt-records.sqlite').fsPath
-    );
+    const databasePath = vscode.Uri.joinPath(storageUri, 'creative-projects.sqlite').fsPath;
+    const legacyDatabasePath = vscode.Uri.joinPath(storageUri, 'prompt-records.sqlite').fsPath;
+    if (existsSync(databasePath) && existsSync(legacyDatabasePath)) {
+      throw new Error('项目数据库与旧版记录数据库同时存在，无法安全迁移。');
+    }
+    if (existsSync(legacyDatabasePath)) {
+      renameSync(legacyDatabasePath, databasePath);
+    }
+    const connection = new DatabaseSync(databasePath);
 
     try {
       connection.exec('PRAGMA foreign_keys = ON');
@@ -115,8 +105,7 @@ export class PromptDatabase implements vscode.Disposable {
           title TEXT,
           category_id TEXT NOT NULL,
           category_name TEXT NOT NULL,
-          collection_id TEXT NOT NULL DEFAULT '0',
-          episode_number INTEGER,
+          project_id TEXT NOT NULL DEFAULT '0',
           schema_json TEXT NOT NULL,
           data_json TEXT NOT NULL,
           generated_result_chinese TEXT,
@@ -138,18 +127,15 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-  * 保存分类、合集归属、字段模板快照和表单数据。
+  * 保存分类、项目归属、字段模板快照和表单数据。
    * @param input 要保存的记录内容。
    */
   saveRecord(input: NewPromptRecord): PromptRecord {
-    const collectionId = input.collectionId ?? '0';
-    this.assertWorkCollectionExists(collectionId);
-    this.assertEpisodeNumberValid(input.episodeNumber);
-    this.assertEpisodeNumberAvailable(collectionId, input.categoryId, input.episodeNumber);
+    const projectId = input.projectId ?? '0';
+    this.assertWorkProjectExists(projectId);
     const record = {
       ...input,
-      collectionId,
-      episodeNumber: input.episodeNumber,
+      projectId,
       id: randomUUID(),
       createdAt: new Date().toISOString()
     };
@@ -158,15 +144,14 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.connection.prepare(`
       INSERT INTO prompt_records (
-        id, title, category_id, category_name, collection_id, episode_number, schema_json, data_json, created_at, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, title, category_id, category_name, project_id, schema_json, data_json, created_at, generated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.title,
       record.categoryId,
       record.categoryName,
-      record.collectionId,
-      record.episodeNumber ?? null,
+      record.projectId,
       schemaJson,
       dataJson,
       record.createdAt,
@@ -184,20 +169,20 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-   * 查询记录，可按分类标识和合集筛选。
+   * 查询记录，可按分类标识和项目筛选。
    * @param categoryId 分类标识；不传时查询全部记录。
-   * @param collectionId 合集标识；'0' 表示未归属合集，不传时不按合集筛选。
+   * @param projectId 项目标识；'0' 表示未归属项目，不传时不按项目筛选。
    */
-  listRecords(categoryId?: string, collectionId?: string): PromptRecord[] {
+  listRecords(categoryId?: string, projectId?: string): PromptRecord[] {
     const conditions: string[] = [];
     const parameters: string[] = [];
     if (categoryId !== undefined) {
       conditions.push('category_id = ?');
       parameters.push(categoryId);
     }
-    if (collectionId !== undefined) {
-      conditions.push('collection_id = ?');
-      parameters.push(collectionId);
+    if (projectId !== undefined) {
+      conditions.push('project_id = ?');
+      parameters.push(projectId);
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = this.connection.prepare(`
@@ -219,75 +204,6 @@ export class PromptDatabase implements vscode.Disposable {
     return row ? readRecord(row) : undefined;
   }
 
-  /** 查询已绑定合集的集数记录，用于表单即时校验。 */
-  listEpisodeNumberRecords(): EpisodeNumberRecord[] {
-    const rows = this.connection.prepare(`
-      SELECT records.id, records.title, records.category_id, records.category_name, records.collection_id,
-        collections.name AS collection_name, records.episode_number
-      FROM prompt_records AS records
-      INNER JOIN collections ON collections.id = records.collection_id
-      WHERE records.episode_number IS NOT NULL
-      ORDER BY records.collection_id, records.episode_number
-    `).all() as {
-      id: string;
-      title: string | null;
-      category_id: string;
-      category_name: string;
-      collection_id: string;
-      collection_name: string;
-      episode_number: number;
-    }[];
-
-    return rows.map((row) => ({
-      id: row.id,
-      title: row.title ?? undefined,
-      categoryId: row.category_id,
-      categoryName: row.category_name,
-      collectionId: row.collection_id,
-      collectionName: row.collection_name,
-      episodeNumber: row.episode_number
-    }));
-  }
-
-  /** 查询指定合集和集数的冲突记录，可排除正在编辑的记录。 */
-  findEpisodeNumberConflict(
-    collectionId: string,
-    categoryId: string,
-    episodeNumber: number,
-    excludeRecordId?: string
-  ): EpisodeNumberRecord | undefined {
-    if (collectionId === '0') {
-      return undefined;
-    }
-    const row = this.connection.prepare(`
-      SELECT records.id, records.title, records.category_id, records.category_name, records.collection_id,
-        collections.name AS collection_name, records.episode_number
-      FROM prompt_records AS records
-      INNER JOIN collections ON collections.id = records.collection_id
-      WHERE records.collection_id = ? AND records.category_id = ? AND records.episode_number = ?
-        AND (? IS NULL OR records.id <> ?)
-      LIMIT 1
-    `).get(collectionId, categoryId, episodeNumber, excludeRecordId ?? null, excludeRecordId ?? null) as {
-      id: string;
-      title: string | null;
-      category_id: string;
-      category_name: string;
-      collection_id: string;
-      collection_name: string;
-      episode_number: number;
-    } | undefined;
-
-    return row ? {
-      id: row.id,
-      title: row.title ?? undefined,
-      categoryId: row.category_id,
-      categoryName: row.category_name,
-      collectionId: row.collection_id,
-      collectionName: row.collection_name,
-      episodeNumber: row.episode_number
-    } : undefined;
-  }
-
   /**
    * 更新记录标题、字段模板和数据。
    * @param id 记录标识。
@@ -295,19 +211,14 @@ export class PromptDatabase implements vscode.Disposable {
    * @returns 更新后的记录；记录不存在时返回 undefined。
    */
   updateRecord(id: string, input: UpdatedPromptRecord): PromptRecord | undefined {
-    this.assertWorkCollectionExists(input.collectionId);
-    this.assertEpisodeNumberValid(input.episodeNumber);
-    const existingRecord = this.getRecord(id);
-    if (existingRecord) {
-      this.assertEpisodeNumberAvailable(input.collectionId, existingRecord.categoryId, input.episodeNumber, id);
-    }
+    this.assertWorkProjectExists(input.projectId);
     const schemaJson = serializeJson(input.schema, 'schema');
     const dataJson = serializeJson(input.data, 'data');
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET title = ?, collection_id = ?, episode_number = ?, schema_json = ?, data_json = ?
+      SET title = ?, project_id = ?, schema_json = ?, data_json = ?
       WHERE id = ?
-    `).run(input.title, input.collectionId, input.episodeNumber ?? null, schemaJson, dataJson, id);
+    `).run(input.title, input.projectId, schemaJson, dataJson, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -433,13 +344,13 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-   * 返回按创建时间排序的全部合集。
-   * @returns 合集列表。
+   * 返回按创建时间排序的全部项目。
+   * @returns 项目列表。
    */
-  listWorkCollections(): WorkCollection[] {
+  listWorkProjects(): WorkProject[] {
     const rows = this.connection.prepare(`
       SELECT id, name, description, created_at, updated_at
-      FROM collections ORDER BY created_at DESC, id DESC
+      FROM projects ORDER BY created_at DESC, id DESC
     `).all() as unknown as {
       id: string; name: string; description: string; created_at: string; updated_at: string;
     }[];
@@ -453,17 +364,17 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-   * 创建一个合集。
-   * @param input 合集名称和描述。
-   * @returns 已保存的合集。
-   * @throws 名称为空或与现有合集重复时抛出错误。
+   * 创建一个项目。
+   * @param input 项目名称和描述。
+   * @returns 已保存的项目。
+   * @throws 名称为空或与现有项目重复时抛出错误。
    */
-  createWorkCollection(input: NewWorkCollection): WorkCollection {
+  createWorkProject(input: NewWorkProject): WorkProject {
     const name = input.name.trim();
     if (!name) {
-      throw new Error('合集名称不能为空。');
+      throw new Error('项目名称不能为空。');
     }
-    const collection = {
+    const project = {
       id: randomUUID(),
       name,
       description: input.description,
@@ -471,47 +382,47 @@ export class PromptDatabase implements vscode.Disposable {
     };
     try {
       this.connection.prepare(`
-        INSERT INTO collections (id, name, description, created_at, updated_at)
+        INSERT INTO projects (id, name, description, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?)
-      `).run(collection.id, collection.name, collection.description, collection.createdAt, collection.createdAt);
+      `).run(project.id, project.name, project.description, project.createdAt, project.createdAt);
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        throw new Error('合集名称已存在。');
+        throw new Error('项目名称已存在。');
       }
       throw error;
     }
     this.recordsChangedEmitter.fire();
-    return { ...collection, updatedAt: collection.createdAt };
+    return { ...project, updatedAt: project.createdAt };
   }
 
   /**
-   * 更新合集名称和描述。
-   * @param id 合集标识。
-   * @param input 更新后的合集名称和描述。
-   * @returns 更新后的合集；不存在时返回 undefined。
+   * 更新项目名称和描述。
+   * @param id 项目标识。
+   * @param input 更新后的项目名称和描述。
+   * @returns 更新后的项目；不存在时返回 undefined。
    */
-  updateWorkCollection(id: string, input: NewWorkCollection): WorkCollection | undefined {
+  updateWorkProject(id: string, input: NewWorkProject): WorkProject | undefined {
     const name = input.name.trim();
     if (!name) {
-      throw new Error('合集名称不能为空。');
+      throw new Error('项目名称不能为空。');
     }
     const updatedAt = new Date().toISOString();
     try {
       const result = this.connection.prepare(`
-        UPDATE collections SET name = ?, description = ?, updated_at = ? WHERE id = ?
+        UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ?
       `).run(name, input.description, updatedAt, id);
       if (Number(result.changes) === 0) {
         return undefined;
       }
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        throw new Error('合集名称已存在。');
+        throw new Error('项目名称已存在。');
       }
       throw error;
     }
     this.recordsChangedEmitter.fire();
     const row = this.connection.prepare(`
-      SELECT id, name, description, created_at, updated_at FROM collections WHERE id = ?
+      SELECT id, name, description, created_at, updated_at FROM projects WHERE id = ?
     `).get(id) as {
       id: string; name: string; description: string; created_at: string; updated_at: string;
     };
@@ -525,15 +436,15 @@ export class PromptDatabase implements vscode.Disposable {
   }
 
   /**
-   * 删除合集及其绑定的全部创作记录。
-   * @param id 合集标识。
-   * @returns 是否删除了合集。
+   * 删除项目及其绑定的全部创作记录。
+   * @param id 项目标识。
+   * @returns 是否删除了项目。
    */
-  deleteWorkCollection(id: string): boolean {
+  deleteWorkProject(id: string): boolean {
     this.connection.exec('BEGIN');
     try {
-      this.connection.prepare('DELETE FROM prompt_records WHERE collection_id = ?').run(id);
-      const result = this.connection.prepare('DELETE FROM collections WHERE id = ?').run(id);
+      this.connection.prepare('DELETE FROM prompt_records WHERE project_id = ?').run(id);
+      const result = this.connection.prepare('DELETE FROM projects WHERE id = ?').run(id);
       this.connection.exec('COMMIT');
       const deleted = Number(result.changes) > 0;
       if (deleted) {
@@ -546,39 +457,14 @@ export class PromptDatabase implements vscode.Disposable {
     }
   }
 
-  /** 校验记录所属合集存在；标识 '0' 表示未归属合集。 */
-  private assertWorkCollectionExists(collectionId: string): void {
-    if (collectionId === '0') {
+  /** 校验记录所属项目存在；标识 '0' 表示未归属项目。 */
+  private assertWorkProjectExists(projectId: string): void {
+    if (projectId === '0') {
       return;
     }
-    const collection = this.connection.prepare('SELECT 1 FROM collections WHERE id = ?').get(collectionId);
-    if (!collection) {
-      throw new Error('所选合集不存在。');
-    }
-  }
-
-  /** 确保已填写的集数为正安全整数。 */
-  private assertEpisodeNumberValid(episodeNumber: number | undefined): void {
-    if (episodeNumber !== undefined && (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1)) {
-      throw new Error('集数必须是大于或等于 1 的整数。');
-    }
-  }
-
-  /** 阻止同一合集内的任务重复占用集数。 */
-  private assertEpisodeNumberAvailable(
-    collectionId: string,
-    categoryId: string,
-    episodeNumber: number | undefined,
-    excludeRecordId?: string
-  ): void {
-    if (episodeNumber === undefined) {
-      return;
-    }
-    const conflict = this.findEpisodeNumberConflict(collectionId, categoryId, episodeNumber, excludeRecordId);
-    if (conflict) {
-      throw new Error(
-        `合集“${conflict.collectionName}”的第 ${episodeNumber} 集已被同类任务“${conflict.title ?? '未命名任务'}”（${conflict.categoryName}）占用。请更改集数或选择其他合集。`
-      );
+    const project = this.connection.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      throw new Error('所选项目不存在。');
     }
   }
 
@@ -606,8 +492,7 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
     title: row.title ?? undefined,
     categoryId: row.category_id,
     categoryName: row.category_name,
-    collectionId: row.collection_id,
-    episodeNumber: row.episode_number ?? undefined,
+    projectId: row.project_id,
     schema: JSON.parse(row.schema_json) as unknown,
     data: JSON.parse(row.data_json) as unknown,
     generatedResultChinese: row.generated_result_chinese ?? undefined,
@@ -621,19 +506,24 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
 function migratePromptRecords(connection: DatabaseSync): void {
   connection.exec('BEGIN');
   try {
-    const collectionTables = connection.prepare(`
+    const projectTables = connection.prepare(`
       SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name IN ('collections', 'episodes')
+      WHERE type = 'table' AND name IN ('projects', 'collections', 'episodes')
     `).all() as { name: string }[];
-    const tableNames = new Set(collectionTables.map((table) => table.name));
+    const tableNames = new Set(projectTables.map((table) => table.name));
     if (tableNames.has('episodes') && tableNames.has('collections')) {
-      throw new Error('数据库同时存在旧版合集表和新版合集表，无法安全迁移。');
+      throw new Error('数据库同时存在旧版项目表和新版项目表，无法安全迁移。');
+    }
+    if (tableNames.has('projects') && (tableNames.has('collections') || tableNames.has('episodes'))) {
+      throw new Error('数据库同时存在旧项目表和新项目表，无法安全迁移。');
     }
     if (tableNames.has('episodes')) {
-      connection.exec('ALTER TABLE episodes RENAME TO collections');
-    } else if (!tableNames.has('collections')) {
+      connection.exec('ALTER TABLE episodes RENAME TO projects');
+    } else if (tableNames.has('collections')) {
+      connection.exec('ALTER TABLE collections RENAME TO projects');
+    } else if (!tableNames.has('projects')) {
       connection.exec(`
-        CREATE TABLE collections (
+        CREATE TABLE projects (
           id TEXT PRIMARY KEY NOT NULL,
           name TEXT NOT NULL UNIQUE,
           description TEXT NOT NULL,
@@ -647,13 +537,17 @@ function migratePromptRecords(connection: DatabaseSync): void {
       name: string;
     }[];
     const columnNames = new Set(columns.map((column) => column.name));
-    if (columnNames.has('episode_id') && columnNames.has('collection_id')) {
-      throw new Error('数据库同时存在旧版合集关联字段和新版合集关联字段，无法安全迁移。');
+    if ((columnNames.has('episode_id') || columnNames.has('collection_id')) && columnNames.has('project_id')) {
+      throw new Error('数据库同时存在旧版项目关联字段和新版项目关联字段，无法安全迁移。');
     }
     if (columnNames.has('episode_id')) {
-      connection.exec('ALTER TABLE prompt_records RENAME COLUMN episode_id TO collection_id');
+      connection.exec('ALTER TABLE prompt_records RENAME COLUMN episode_id TO project_id');
       columnNames.delete('episode_id');
-      columnNames.add('collection_id');
+      columnNames.add('project_id');
+    } else if (columnNames.has('collection_id')) {
+      connection.exec('ALTER TABLE prompt_records RENAME COLUMN collection_id TO project_id');
+      columnNames.delete('collection_id');
+      columnNames.add('project_id');
     }
     const legacyResults = columnNames.has('generated_result')
       ? connection.prepare(`
@@ -668,11 +562,8 @@ function migratePromptRecords(connection: DatabaseSync): void {
     if (!columnNames.has('generated_at')) {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_at TEXT');
     }
-    if (!columnNames.has('collection_id')) {
-      connection.exec("ALTER TABLE prompt_records ADD COLUMN collection_id TEXT NOT NULL DEFAULT '0'");
-    }
-    if (!columnNames.has('episode_number')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN episode_number INTEGER');
+    if (!columnNames.has('project_id')) {
+      connection.exec("ALTER TABLE prompt_records ADD COLUMN project_id TEXT NOT NULL DEFAULT '0'");
     }
     if (!columnNames.has('generated_result_chinese')) {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_chinese TEXT');
@@ -708,7 +599,15 @@ function migratePromptRecords(connection: DatabaseSync): void {
       connection.exec('ALTER TABLE prompt_records DROP COLUMN generated_result');
     }
 
-    connection.exec('DROP INDEX IF EXISTS prompt_records_collection_task_episode_unique_idx');
+    connection.exec(`
+      DROP INDEX IF EXISTS prompt_records_project_task_episode_unique_idx;
+      DROP INDEX IF EXISTS prompt_records_project_episode_unique_idx;
+      DROP INDEX IF EXISTS prompt_records_collection_task_episode_unique_idx;
+      DROP INDEX IF EXISTS prompt_records_collection_episode_unique_idx;
+    `);
+    if (columnNames.has('episode_number')) {
+      connection.exec('ALTER TABLE prompt_records DROP COLUMN episode_number');
+    }
     const updateCategory = connection.prepare(`
       UPDATE prompt_records
       SET category_id = ?, category_name = ?
@@ -731,12 +630,8 @@ function migratePromptRecords(connection: DatabaseSync): void {
     }
     connection.exec(`
       UPDATE prompt_records
-      SET collection_id = '0'
-      WHERE collection_id IS NULL OR collection_id = '';
-      DROP INDEX IF EXISTS prompt_records_collection_episode_unique_idx;
-      CREATE UNIQUE INDEX IF NOT EXISTS prompt_records_collection_task_episode_unique_idx
-        ON prompt_records (collection_id, category_id, episode_number)
-        WHERE collection_id <> '0' AND episode_number IS NOT NULL;
+      SET project_id = '0'
+      WHERE project_id IS NULL OR project_id = '';
     `);
     connection.exec('COMMIT');
   } catch (error) {
@@ -745,7 +640,7 @@ function migratePromptRecords(connection: DatabaseSync): void {
   }
 }
 
-/** 判断数据库异常是否由合集名称唯一约束触发。 */
+/** 判断数据库异常是否由项目名称唯一约束触发。 */
 function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('UNIQUE constraint failed');
 }
