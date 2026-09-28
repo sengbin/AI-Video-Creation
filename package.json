@@ -2,7 +2,7 @@
   "name": "ai-video-creation-assistant",
   "displayName": "AI视频创作助手",
   "description": "AI故事剧本创作与视觉提示词生成。",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "icon": "logo.png",
   "publisher": "chengbin",
   "license": "Apache-2.0",
