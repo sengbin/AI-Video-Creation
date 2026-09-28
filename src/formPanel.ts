@@ -498,7 +498,7 @@ function createFormHtml(
 
     // 显示或隐藏集数字段，并同步集数输入框的原生校验状态。
     function updateEpisodeNumberField() {
-      if (!supportsEpisodeNumber) return undefined;
+      if (!supportsEpisodeNumber) return;
       const isRequired = collectionSelect.value !== '0';
       episodeNumberField.hidden = !isRequired;
       episodeNumberInput.disabled = !isRequired;
@@ -507,7 +507,7 @@ function createFormHtml(
         episodeNumberInput.value = '';
         episodeNumberError.textContent = '';
         episodeNumberInput.setCustomValidity('');
-        return undefined;
+        return;
       }
 
       const rawEpisodeNumber = episodeNumberInput.value;
@@ -520,7 +520,6 @@ function createFormHtml(
       }
       episodeNumberError.textContent = validationMessage ?? '';
       episodeNumberInput.setCustomValidity(validationMessage ?? '');
-      return validationMessage;
     }
 
     function closeCollectionPicker(returnFocus = false) {

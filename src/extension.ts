@@ -51,7 +51,3 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 }
 
-/**
- * 释放扩展停用时需要清理的资源。
- */
-export function deactivate(): void {}
