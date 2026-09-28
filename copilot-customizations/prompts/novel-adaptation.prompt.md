@@ -1,5 +1,5 @@
 ---
-description: 将用户提供的小说或故事材料改编为短片或短剧
+description: 将用户提供的小说或其他原作材料改编为短片或短剧
 argument-hint: 附上原作内容，并填写改编目标、篇幅和补充要求
 name: 'AI 视频创作-小说重创作'
 agent: 'AI 视频创作'

@@ -221,7 +221,7 @@ export function collectFormValues(
           parseImageAttachments(values[IMAGE_ATTACHMENTS_FIELD]).length === 0) {
         void panel.webview.postMessage({
           command: 'validation-error',
-          text: '图片写故事至少需要添加一张图片。'
+          text: '图片灵感写作至少需要添加一张图片。'
         });
         return;
       }

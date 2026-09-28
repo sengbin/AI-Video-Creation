@@ -9,8 +9,9 @@ import { PromptDatabase } from '../../database';
 import { parseImageAttachments } from '../../formPanel';
 import {
   formWorkflows,
+  CREATIVE_WRITING_WORKFLOW_NAME,
   IMAGE_ATTACHMENTS_FIELD,
-  IMAGE_STORY_WORKFLOW_NAME,
+  IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from '../../formWorkflows';
 import {
@@ -29,8 +30,8 @@ suite('AI视频创作助手扩展', () => {
     try {
       const record = database.saveRecord({
         title: '示例记录',
-        categoryId: 'ai-video-creation-tools_collect_story_parameters',
-        categoryName: '创意写故事',
+        categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+        categoryName: '创意写作',
         schema: [
           { name: 'title', label: '标题', required: true },
           { name: 'genre', label: '题材' }
@@ -41,7 +42,7 @@ suite('AI视频创作助手扩展', () => {
       assert.ok(fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
       assert.deepStrictEqual(database.getRecord(record.id), record);
       assert.deepStrictEqual(
-        database.listRecords('ai-video-creation-tools_collect_story_parameters'),
+        database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME),
         [record]
       );
       assert.deepStrictEqual(
@@ -83,7 +84,7 @@ suite('AI视频创作助手扩展', () => {
       const boundRecord = database.saveRecord({
         title: '合集记录',
         categoryId: 'story',
-        categoryName: '故事',
+        categoryName: '文字作品',
         collectionId: collection.id,
         schema: [],
         data: { title: '合集记录' }
@@ -91,7 +92,7 @@ suite('AI视频创作助手扩展', () => {
       const unassignedRecord = database.saveRecord({
         title: '独立记录',
         categoryId: 'story',
-        categoryName: '故事',
+        categoryName: '文字作品',
         collectionId: '0',
         schema: [],
         data: { title: '独立记录' }
@@ -120,7 +121,7 @@ suite('AI视频创作助手扩展', () => {
       const firstRecord = database.saveRecord({
         title: '相遇',
         categoryId: 'story',
-        categoryName: '创意写故事',
+        categoryName: '创意写作',
         collectionId: firstCollection.id,
         episodeNumber: 1,
         schema: [],
@@ -138,7 +139,7 @@ suite('AI视频创作助手扩展', () => {
       const otherCollectionRecord = database.saveRecord({
         title: '序章',
         categoryId: 'story',
-        categoryName: '创意写故事',
+        categoryName: '创意写作',
         collectionId: secondCollection.id,
         episodeNumber: 1,
         schema: [],
@@ -152,12 +153,12 @@ suite('AI视频创作助手扩展', () => {
       assert.throws(() => database.saveRecord({
         title: '重复集数',
         categoryId: 'story',
-        categoryName: '创意写故事',
+        categoryName: '创意写作',
         collectionId: firstCollection.id,
         episodeNumber: 1,
         schema: [],
         data: { title: '重复集数' }
-      }), /第一部作品.*第 1 集.*相遇.*创意写故事/);
+      }), /第一部作品.*第 1 集.*相遇.*创意写作/);
       assert.throws(() => database.updateRecord(otherCollectionRecord.id, {
         title: '序章',
         collectionId: firstCollection.id,
@@ -168,7 +169,7 @@ suite('AI视频创作助手扩展', () => {
       assert.throws(() => database.saveRecord({
         title: '小数集数',
         categoryId: 'story',
-        categoryName: '创意写故事',
+        categoryName: '创意写作',
         collectionId: firstCollection.id,
         episodeNumber: 1.5,
         schema: [],
@@ -206,12 +207,12 @@ suite('AI视频创作助手扩展', () => {
       data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2]).toString('base64')
     };
     const record = database.saveRecord({
-      title: '含图片的故事记录',
+      title: '含图片的创作记录',
       categoryId: workflow.toolName,
       categoryName: workflow.title,
       schema: workflow.fields,
       data: {
-        title: '含图片的故事记录',
+        title: '含图片的创作记录',
         [IMAGE_ATTACHMENTS_FIELD]: JSON.stringify([attachment])
       }
     });
@@ -229,10 +230,10 @@ suite('AI视频创作助手扩展', () => {
       );
 
       const updatedRecord = database.updateRecord(record.id, {
-        title: '编辑后的图片故事记录',
+        title: '编辑后的图片创作记录',
         collectionId: record.collectionId,
         schema: workflow.fields,
-        data: { ...restoredValues, title: '编辑后的图片故事记录' }
+        data: { ...restoredValues, title: '编辑后的图片创作记录' }
       });
       assert.ok(updatedRecord);
       assert.deepStrictEqual(
@@ -276,6 +277,44 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(record.updatedAt, record.createdAt);
       assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
       assert.strictEqual(record.generatedResultEnglish, undefined);
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('能够迁移旧写作工作流标识并保留作品记录', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-writing-category-migration-'));
+    const storageUri = vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage'));
+    let database = await PromptDatabase.open(storageUri);
+
+    try {
+      const creativeRecord = database.saveRecord({
+        title: '创意作品',
+        categoryId: 'ai-video-creation-tools_collect_story_parameters',
+        categoryName: '创意写故事',
+        schema: [],
+        data: { title: '创意作品' }
+      });
+      const imageRecord = database.saveRecord({
+        title: '图片灵感作品',
+        categoryId: 'ai-video-creation-tools_collect_image_story_parameters',
+        categoryName: '图片写故事',
+        schema: [],
+        data: { title: '图片灵感作品' }
+      });
+
+      database.dispose();
+      database = await PromptDatabase.open(storageUri);
+
+      const migratedCreativeRecord = database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME)[0];
+      const migratedImageRecord = database.listRecords(IMAGE_INSPIRED_WRITING_WORKFLOW_NAME)[0];
+      assert.strictEqual(migratedCreativeRecord.id, creativeRecord.id);
+      assert.strictEqual(migratedCreativeRecord.categoryName, '创意写作');
+      assert.strictEqual(migratedImageRecord.id, imageRecord.id);
+      assert.strictEqual(migratedImageRecord.categoryName, '图片灵感写作');
+      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_story_parameters'), []);
+      assert.deepStrictEqual(database.listRecords('ai-video-creation-tools_collect_image_story_parameters'), []);
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -366,7 +405,7 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('能够将图片写故事附件作为图像内容交给 Copilot', async () => {
+  test('能够将图片灵感写作附件作为图像内容交给 Copilot', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-image-submission-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const workflow = formWorkflows.find((item) => item.supportsImageAttachments);
@@ -406,7 +445,7 @@ suite('AI视频创作助手扩展', () => {
     const record = database.saveRecord({
       title: '待生成记录',
       categoryId: 'ai-video-creation-tools_collect_character_parameters',
-      categoryName: '创意写故事',
+      categoryName: '创意写作',
       schema: [],
       data: { title: '待生成记录' }
     });
@@ -442,15 +481,15 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
-  test('图片写故事只保存并恢复单篇故事正文', async () => {
+  test('图片灵感写作只保存并恢复单篇创作内容', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-story-result-'));
     let database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const record = database.saveRecord({
-      title: '待生成故事',
-      categoryId: IMAGE_STORY_WORKFLOW_NAME,
-      categoryName: '图片写故事',
+      title: '待生成作品',
+      categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+      categoryName: '图片灵感写作',
       schema: [],
-      data: { title: '待生成故事' }
+      data: { title: '待生成作品' }
     });
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -493,13 +532,13 @@ suite('AI视频创作助手扩展', () => {
     const cancellationSource = new vscode.CancellationTokenSource();
     const contentWorkflows = formWorkflows.filter((workflow) =>
       workflow.resultType === 'content' &&
-      workflow.toolName !== IMAGE_STORY_WORKFLOW_NAME &&
+      workflow.toolName !== IMAGE_INSPIRED_WRITING_WORKFLOW_NAME &&
       workflow.toolName !== SHOOTING_SCRIPT_WORKFLOW_NAME
     );
 
     try {
       assert.deepStrictEqual(contentWorkflows.map((workflow) => workflow.title), [
-        '创意写故事', '小说重创作', '剧本创作'
+        '创意写作', '小说重创作', '剧本创作'
       ]);
       for (const workflow of contentWorkflows) {
         const record = database.saveRecord({
@@ -584,14 +623,14 @@ suite('AI视频创作助手扩展', () => {
 
     assert.deepStrictEqual(registeredTools, [
       'ai-video-creation-tools_collect_character_parameters',
+      'ai-video-creation-tools_collect_creative_writing_parameters',
       'ai-video-creation-tools_collect_effect_parameters',
-      'ai-video-creation-tools_collect_image_story_parameters',
+      'ai-video-creation-tools_collect_image_inspired_writing_parameters',
       'ai-video-creation-tools_collect_novel_parameters',
       'ai-video-creation-tools_collect_prop_parameters',
       'ai-video-creation-tools_collect_scene_parameters',
       'ai-video-creation-tools_collect_screenplay_parameters',
-      'ai-video-creation-tools_collect_shooting_script_parameters',
-      'ai-video-creation-tools_collect_story_parameters'
+      'ai-video-creation-tools_collect_shooting_script_parameters'
     ]);
     assert.ok(vscode.lm.tools.some((tool) => tool.name === SAVE_GENERATED_RESULT_TOOL_NAME));
 
@@ -601,8 +640,8 @@ suite('AI视频创作助手扩展', () => {
       false
     );
     const expectedWorkflowOrder = [
-      'ai-video-creation-tools_collect_story_parameters',
-      'ai-video-creation-tools_collect_image_story_parameters',
+      'ai-video-creation-tools_collect_creative_writing_parameters',
+      'ai-video-creation-tools_collect_image_inspired_writing_parameters',
       'ai-video-creation-tools_collect_novel_parameters',
       'ai-video-creation-tools_collect_character_parameters',
       'ai-video-creation-tools_collect_scene_parameters',
@@ -614,7 +653,7 @@ suite('AI视频创作助手扩展', () => {
     assert.deepStrictEqual(formWorkflows.map((workflow) => workflow.toolName), expectedWorkflowOrder);
     assert.deepStrictEqual(
       formWorkflows.filter((workflow) => workflow.resultType === 'content').map((workflow) => workflow.title),
-      ['创意写故事', '图片写故事', '小说重创作', '剧本创作', '拍摄脚本制作']
+      ['创意写作', '图片灵感写作', '小说重创作', '剧本创作', '拍摄脚本制作']
     );
     assert.deepStrictEqual(
       contributions.languageModelTools
@@ -631,8 +670,8 @@ suite('AI视频创作助手扩展', () => {
     assert.deepStrictEqual(
       contributions.chatPromptFiles.map((prompt: { path: string }) => path.basename(prompt.path)),
       [
-        'creative-story.prompt.md',
-        'image-story.prompt.md',
+        'creative-writing.prompt.md',
+        'image-inspired-writing.prompt.md',
         'novel-adaptation.prompt.md',
         'character-generation.prompt.md',
         'scene-generation.prompt.md',
@@ -693,10 +732,10 @@ suite('AI视频创作助手扩展', () => {
     }
 
     const expectedFieldNames: Readonly<Record<string, readonly string[]>> = {
-      'ai-video-creation-tools_collect_story_parameters': [
+      'ai-video-creation-tools_collect_creative_writing_parameters': [
         'title', 'idea', 'genre', 'duration', 'style', 'additionalInfo'
       ],
-      'ai-video-creation-tools_collect_image_story_parameters': [
+      'ai-video-creation-tools_collect_image_inspired_writing_parameters': [
         'title', 'genre', 'duration', 'visualElements', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_novel_parameters': [
@@ -782,7 +821,7 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(agentContent.includes('工具返回 `status: cancelled` 时停止本次任务'));
     assert.ok(agentContent.includes('返回 `status: submitted` 时从 `parameters` 读取已提交内容继续'));
     assert.ok(agentContent.includes('直接分析图片参数工具结果中的图片，不要求用户将同一图片另行附加到 Copilot 聊天'));
-    assert.ok(agentContent.includes('创意写故事、图片写故事、小说重创作、剧本创作和拍摄脚本制作'));
+    assert.ok(agentContent.includes('创意写作、图片灵感写作、小说重创作、剧本创作和拍摄脚本制作'));
     assert.ok(agentContent.includes('直接创作的作品使用 `content`，视觉资产提示词使用 `contentZh` 和 `contentEn`'));
 
     const skillPath = path.join(extensionRoot, contributions.chatSkills[0].path);
@@ -801,8 +840,8 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(!skillContent.includes('必须使用同一个标注为'));
 
     const promptTools = [
-      ['creative-story.prompt.md', 'ai-video-creation-tools_collect_story_parameters', '## 任务'],
-      ['image-story.prompt.md', 'ai-video-creation-tools_collect_image_story_parameters', '## 图片关系'],
+      ['creative-writing.prompt.md', 'ai-video-creation-tools_collect_creative_writing_parameters', '## 任务'],
+      ['image-inspired-writing.prompt.md', 'ai-video-creation-tools_collect_image_inspired_writing_parameters', '## 图片关系'],
       ['novel-adaptation.prompt.md', 'ai-video-creation-tools_collect_novel_parameters', '## 原作要求'],
       ['character-generation.prompt.md', 'ai-video-creation-tools_collect_character_parameters', '## 角色设定流程'],
       ['scene-generation.prompt.md', 'ai-video-creation-tools_collect_scene_parameters', '## 场景设定流程'],
@@ -837,11 +876,11 @@ suite('AI视频创作助手扩展', () => {
         assert.ok(promptContent.includes('角色类型和主体'));
         assert.ok(promptContent.includes('丧尸的腐坏特征'));
       }
-      if (promptName === 'image-story.prompt.md') {
+      if (promptName === 'image-inspired-writing.prompt.md') {
         assert.ok(promptContent.includes('分别分析，不擅自建立人物或事件联系'));
       }
-      if (promptName === 'creative-story.prompt.md') {
-        assert.ok(promptContent.includes('未指定形式时，默认交付完整连贯的故事正文'));
+      if (promptName === 'creative-writing.prompt.md') {
+        assert.ok(promptContent.includes('未指定形式时，根据题材选择最合适的完整作品形式'));
       }
       if (promptName === 'novel-adaptation.prompt.md') {
         assert.ok(promptContent.includes('原作文本、章节、梗概或可读取的文件内容是改编必需材料'));

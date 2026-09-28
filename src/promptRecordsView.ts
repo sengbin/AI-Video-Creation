@@ -789,10 +789,10 @@ function createCategoryHtml(): string {
     });
     const categoryStages = [
       {
-        title: '阶段一 · 故事创作',
+        title: '阶段一 · 内容创作',
         categoryIds: [
-          'ai-video-creation-tools_collect_story_parameters',
-          'ai-video-creation-tools_collect_image_story_parameters',
+          'ai-video-creation-tools_collect_creative_writing_parameters',
+          'ai-video-creation-tools_collect_image_inspired_writing_parameters',
           'ai-video-creation-tools_collect_novel_parameters'
         ]
       },

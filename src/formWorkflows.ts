@@ -27,7 +27,8 @@ export type FormValues = Record<string, string>;
 
 /** 表单与工作流工具之间传递图片附件的隐藏字段名。 */
 export const IMAGE_ATTACHMENTS_FIELD = '__imageAttachments';
-export const IMAGE_STORY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_image_story_parameters';
+export const CREATIVE_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_creative_writing_parameters';
+export const IMAGE_INSPIRED_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_image_inspired_writing_parameters';
 export const SCREENPLAY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_screenplay_parameters';
 export const SHOOTING_SCRIPT_WORKFLOW_NAME = 'ai-video-creation-tools_collect_shooting_script_parameters';
 
@@ -104,33 +105,33 @@ const CAMERA_STYLE_OPTIONS = [
 
 export const formWorkflows: readonly FormWorkflow[] = [
   {
-    toolName: 'ai-video-creation-tools_collect_story_parameters',
-    title: '创意写故事',
-    promptPath: 'copilot-customizations/prompts/creative-story.prompt.md',
+    toolName: CREATIVE_WRITING_WORKFLOW_NAME,
+    title: '创意写作',
+    promptPath: 'copilot-customizations/prompts/creative-writing.prompt.md',
     resultType: 'content',
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
-      { name: 'idea', label: '核心创意或故事种子', description: '填写创意、灵感或故事种子', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
+      { name: 'idea', label: '创作主题或灵感', description: '填写创作主题、核心创意或灵感', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
       { name: 'genre', label: '题材', description: '例如悬疑、爱情、科幻', placeholder: '例如：悬疑科幻' },
-      { name: 'duration', label: '目标篇幅', description: '填写目标时长或集数', placeholder: '例如：约10分钟；或6集、每集约5分钟' },
-      { name: 'style', label: '表达风格', description: '填写期望的故事风格', placeholder: '例如：节奏紧凑、写实克制，结尾留有余味' },
-      { name: 'additionalInfo', label: '补充要求', description: '填写主题、人物数量、结局、内容边界或交付格式等其他要求', placeholder: '例如：主题是信任与放下；先输出故事大纲，避免血腥内容' }
+      { name: 'duration', label: '目标篇幅或时长', description: '填写目标字数、篇幅、时长或集数', placeholder: '例如：约2000字；或6集、每集约5分钟' },
+      { name: 'style', label: '表达风格', description: '填写期望的作品风格', placeholder: '例如：简洁克制、富有画面感，结尾留有余味' },
+      { name: 'additionalInfo', label: '补充要求', description: '填写主题、人物、结构、结尾、内容边界或交付格式等要求', placeholder: '例如：主题是信任与放下；先输出创作大纲，避免血腥内容' }
     ]
   },
   {
-    toolName: IMAGE_STORY_WORKFLOW_NAME,
-    title: '图片写故事',
-    promptPath: 'copilot-customizations/prompts/image-story.prompt.md',
+    toolName: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+    title: '图片灵感写作',
+    promptPath: 'copilot-customizations/prompts/image-inspired-writing.prompt.md',
     resultType: 'content',
     supportsImageAttachments: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据图片和已填写内容继续。保存并运行时至少添加一张图片。',
     fields: [
       RECORD_TITLE_FIELD,
-      { name: 'genre', label: '题材', description: '例如悬疑、奇幻、现实题材', placeholder: '例如：带有奇幻元素的悬疑故事' },
-      { name: 'duration', label: '目标篇幅', description: '填写目标时长或集数', placeholder: '例如：约8分钟；或4集、每集约5分钟' },
+      { name: 'genre', label: '题材或主题', description: '例如悬疑、奇幻、现实题材', placeholder: '例如：带有奇幻元素的悬疑作品' },
+      { name: 'duration', label: '目标篇幅或时长', description: '填写目标字数、篇幅、时长或集数', placeholder: '例如：约1500字；或4集、每集约5分钟' },
       { name: 'visualElements', label: '图片中必须保留的元素', description: '填写必须保留的人物、物件、环境或构图', placeholder: '例如：保留红色雨伞、石阶和远处的灯塔' },
-      { name: 'additionalInfo', label: '补充要求', description: '填写主角、人物关系、情绪、结局、多图顺序或交付格式等要求', placeholder: '例如：按上传顺序发展故事，输出分集大纲，结尾保持开放' }
+      { name: 'additionalInfo', label: '补充要求', description: '填写人物、情绪、结构、结尾、多图顺序或交付格式等要求', placeholder: '例如：按上传顺序展开内容，输出文章提纲，结尾保持开放' }
     ]
   },
   {
@@ -226,10 +227,10 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '剧本创作',
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
-    notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。故事创意或原作也可以粘贴到聊天或作为附件提供。',
+    notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作灵感或原作也可以粘贴到聊天或作为附件提供。',
     fields: [
       RECORD_TITLE_FIELD,
-      { name: 'sourceMaterial', label: '故事创意或原作材料', description: '填写创意、梗概或改编依据；长篇材料可附加到聊天', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
+      { name: 'sourceMaterial', label: '创作灵感或原作材料', description: '填写创意、梗概或改编依据；长篇材料可附加到聊天', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
       { name: 'format', label: '剧本形态', description: '填写短片、短剧单集、分集剧本等', placeholder: '例如：10分钟悬疑短片剧本' },
       { name: 'genre', label: '题材类型', description: '填写剧本题材', placeholder: '例如：悬疑科幻' },
       { name: 'duration', label: '目标时长或集数', description: '填写总时长、集数及单集时长', placeholder: '例如：总长10分钟；或6集、每集约5分钟' },
@@ -241,10 +242,10 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '拍摄脚本制作',
     promptPath: 'copilot-customizations/prompts/shooting-script.prompt.md',
     resultType: 'content',
-    notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。故事、分场大纲或剧本也可以粘贴到聊天或作为附件提供。',
+    notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作内容、分场大纲或剧本也可以粘贴到聊天或作为附件提供。',
     fields: [
       RECORD_TITLE_FIELD,
-      { name: 'scriptSource', label: '故事或剧本依据', description: '填写故事梗概、分场大纲或剧本；长篇材料可附加到聊天', placeholder: '例如：主角在灯塔收到来自未来的求救信号，调查后发现信号来自自己' },
+      { name: 'scriptSource', label: '创作内容或剧本依据', description: '填写创作梗概、分场大纲或剧本；长篇材料可附加到聊天', placeholder: '例如：主角在灯塔收到来自未来的求救信号，调查后发现信号来自自己' },
       { name: 'duration', label: '目标总时长', description: '填写总时长或单集时长', placeholder: '例如：约3分钟；或每集约5分钟' },
       { name: 'aspectRatio', label: '画幅比例', description: '选择目标视频画幅', options: ['16:9', '9:16', '1:1', '4:3', '2.39:1'] },
       { name: 'visualStyle', label: '画面风格', description: '选择常用风格，也可填写自定义内容', options: VISUAL_STYLE_OPTIONS, allowCustom: true },

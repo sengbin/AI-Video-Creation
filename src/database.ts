@@ -644,6 +644,23 @@ function migratePromptRecords(connection: DatabaseSync): void {
       connection.exec('ALTER TABLE prompt_records DROP COLUMN generated_result');
     }
 
+    connection.exec('DROP INDEX IF EXISTS prompt_records_collection_task_episode_unique_idx');
+    const updateCategory = connection.prepare(`
+      UPDATE prompt_records
+      SET category_id = ?, category_name = ?
+      WHERE category_id = ?
+    `);
+    updateCategory.run(
+      'ai-video-creation-tools_collect_creative_writing_parameters',
+      '创意写作',
+      'ai-video-creation-tools_collect_story_parameters'
+    );
+    updateCategory.run(
+      'ai-video-creation-tools_collect_image_inspired_writing_parameters',
+      '图片灵感写作',
+      'ai-video-creation-tools_collect_image_story_parameters'
+    );
+
     connection.exec(`
       UPDATE prompt_records
       SET updated_at = created_at
