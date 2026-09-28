@@ -14,6 +14,8 @@ export interface FormField {
   /** 是否将自定义输入框放在下拉框下方。 */
   readonly customInputBelow?: boolean;
   readonly projectContentTask?: boolean;
+  /** 关联任务必须属于指定工作流。 */
+  readonly projectTaskCategory?: string;
   readonly required?: boolean;
 }
 
@@ -42,6 +44,12 @@ export type FormValues = Record<string, string>;
 export const IMAGE_ATTACHMENTS_FIELD = '__imageAttachments';
 export const CREATIVE_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_creative_writing_parameters';
 export const IMAGE_INSPIRED_WRITING_WORKFLOW_NAME = 'ai-video-creation-tools_collect_image_inspired_writing_parameters';
+export const NOVEL_RECREATION_WORKFLOW_NAME = 'ai-video-creation-tools_collect_novel_parameters';
+export const UNIQUE_CONTENT_TASK_WORKFLOW_NAMES = [
+  CREATIVE_WRITING_WORKFLOW_NAME,
+  IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  NOVEL_RECREATION_WORKFLOW_NAME
+] as const;
 export const SCREENPLAY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_screenplay_parameters';
 export const SHOOTING_SCRIPT_WORKFLOW_NAME = 'ai-video-creation-tools_collect_shooting_script_parameters';
 
@@ -192,7 +200,7 @@ export const formWorkflows: readonly FormWorkflow[] = [
     ]
   },
   {
-    toolName: 'ai-video-creation-tools_collect_novel_parameters',
+    toolName: NOVEL_RECREATION_WORKFLOW_NAME,
     title: '小说重创作',
     promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     resultType: 'content',
@@ -289,13 +297,13 @@ export const formWorkflows: readonly FormWorkflow[] = [
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
     requiresProject: true,
-    notice: '任务名称、所属项目、关联创作任务、单集最大时长和最大总集数为必填项；单集最大时长是上限，剧本时长将按内容决定。',
+    notice: '任务名称、所属项目、关联内容创作任务、单集最大时长和最大总集数为必填项；单集最大时长是上限，剧本时长将按内容决定。',
     fields: [
       {
         ...TASK_NAME_FIELD,
         description: '必填，用于在任务列表中识别这项剧本创作任务',
       },
-      { name: 'sourceTaskId', label: '关联创作任务', description: '选择当前项目中已有生成内容的任务，生成内容将作为剧本创作素材', placeholder: '请选择创作任务', projectContentTask: true, required: true },
+      { name: 'sourceTaskId', label: '关联内容创作任务', description: '选择当前项目中已有生成内容的任务，生成内容将作为剧本创作素材', placeholder: '请选择创作任务', projectContentTask: true, required: true },
       { name: 'maxEpisodeDurationSeconds', label: '单集最大时长（秒）', description: '填写每集时长上限；Copilot 将按内容分析合理时长，不会为达到上限而扩写', placeholder: '例如：60', inputType: 'number', min: 1, required: true },
       { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限；短片或电影填写1', placeholder: '例如：1', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
       { name: 'additionalInfo', label: '补充要求', description: '填写人物、冲突、主题、保留项、结局或内容边界等其他要求', placeholder: '例如：保留灯塔和未来求救信号设定，避免血腥描写' }
@@ -306,10 +314,11 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '拍摄脚本制作',
     promptPath: 'copilot-customizations/prompts/shooting-script.prompt.md',
     resultType: 'content',
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作内容、分场大纲或剧本也可以粘贴到聊天或作为附件提供。',
+    requiresProject: true,
+    notice: '任务名称、所属项目和关联剧本任务为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。',
     fields: [
       TASK_NAME_FIELD,
-      { name: 'scriptSource', label: '创作内容或剧本依据', description: '填写创作梗概、分场大纲或剧本；长篇材料可附加到聊天', placeholder: '例如：主角在灯塔收到来自未来的求救信号，调查后发现信号来自自己' },
+      { name: 'screenplayTaskId', label: '关联剧本任务', description: '选择当前项目中已生成剧本的剧本创作任务', placeholder: '请选择剧本创作任务', projectContentTask: true, projectTaskCategory: SCREENPLAY_WORKFLOW_NAME, required: true },
       { name: 'aspectRatio', label: '画幅比例', description: '选择目标视频画幅', options: ['16:9', '9:16', '1:1', '4:3', '2.39:1'] },
       { name: 'visualStyle', label: '画面风格', description: '选择常用风格，也可填写自定义内容', options: VISUAL_STYLE_OPTIONS, allowCustom: true },
       { name: 'additionalInfo', label: '补充要求', description: '填写镜头节奏、连续性、声音、模型或其他制作限制', placeholder: '例如：共12个镜头，保留关键对白，不出现字幕和水印' }

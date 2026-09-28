@@ -145,7 +145,8 @@ export function collectFormValues(
       const sourceTaskField = workflow.fields.find((field) => field.projectContentTask);
       const invalidSourceTask = sourceTaskField && values !== undefined &&
         !generatedContentTasks.some((task) =>
-          task.id === values[sourceTaskField.name] && task.projectId === projectId
+          task.id === values[sourceTaskField.name] && task.projectId === projectId &&
+          (!sourceTaskField.projectTaskCategory || task.categoryId === sourceTaskField.projectTaskCategory)
         );
       if (!values || typeof projectId !== 'string' ||
           (workflow.requiresProject && projectId === '0') ||
@@ -788,8 +789,10 @@ function renderField(
     : '';
   const control = field.projectContentTask
     ? `<select id="${name}" name="${name}" data-project-content-task${required}>${[
-      `<option value=""${initialValue === '' ? ' selected' : ''}>请选择创作任务</option>`,
-      ...generatedContentTasks.map((task) => `<option value="${escapeHtml(task.id)}" data-project-id="${escapeHtml(task.projectId)}"${task.projectId !== selectedProjectId ? ' hidden' : ''}${task.id === initialValue ? ' selected' : ''}>${escapeHtml(task.taskName)}</option>`)
+      `<option value=""${initialValue === '' ? ' selected' : ''}>${escapeHtml(field.placeholder ?? '请选择创作任务')}</option>`,
+      ...generatedContentTasks
+        .filter((task) => !field.projectTaskCategory || task.categoryId === field.projectTaskCategory)
+        .map((task) => `<option value="${escapeHtml(task.id)}" data-project-id="${escapeHtml(task.projectId)}"${task.projectId !== selectedProjectId ? ' hidden' : ''}${task.id === initialValue ? ' selected' : ''}>${escapeHtml(task.taskName)}</option>`)
     ].join('')}</select>`
     : field.options
     ? `<div class="select-with-custom${field.customInputBelow ? ' custom-input-below' : ''}">

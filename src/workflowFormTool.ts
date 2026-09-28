@@ -16,7 +16,8 @@ import {
   isChapterContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
-  SHOOTING_SCRIPT_WORKFLOW_NAME
+  SHOOTING_SCRIPT_WORKFLOW_NAME,
+  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES
 } from './formWorkflows';
 
 type EmptyToolInput = Record<string, never>;
@@ -149,7 +150,8 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
     const parameters: Record<string, string | number> | undefined = values
       ? Object.fromEntries(Object.entries(values).filter(([name]) =>
-        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId' && name !== 'taskName'
+        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId' &&
+        name !== 'screenplayTaskId' && name !== 'taskName'
       ))
       : undefined;
     if (parameters) {
@@ -179,8 +181,19 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
         content
       })), null, 2);
     }
+    if (parameters && values && submission?.runPrompt && this.workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME) {
+      const screenplay = this.database.getRecord(values.screenplayTaskId);
+      if (!screenplay || screenplay.categoryId !== SCREENPLAY_WORKFLOW_NAME ||
+          screenplay.projectId !== submission.projectId || !screenplay.generatedResultContent?.trim()) {
+        throw new Error('关联剧本任务不存在、未生成剧本或不属于所选项目。');
+      }
+      parameters.scriptSource = screenplay.generatedResultContent;
+    }
     let recordId = submitted?.recordId;
     if (values && !submitted) {
+      if (UNIQUE_CONTENT_TASK_WORKFLOW_NAMES.some((categoryId) => categoryId === this.workflow.toolName)) {
+        this.database.assertTaskNameUnique(values.taskName, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES);
+      }
       const record = this.database.saveRecord({
         taskName: values.taskName,
         categoryId: this.workflow.toolName,

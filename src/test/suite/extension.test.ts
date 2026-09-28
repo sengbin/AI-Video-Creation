@@ -16,6 +16,7 @@ import {
   CREATIVE_WRITING_WORKFLOW_NAME,
   IMAGE_ATTACHMENTS_FIELD,
   IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from '../../formWorkflows';
@@ -86,6 +87,146 @@ suite('AI视频创作助手扩展', () => {
       assert.ok(html.includes('name="projectId" required'));
       assert.ok(html.includes(`value="${task.id}" data-project-id="${project.id}"`));
     } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('剧本关联字段文案更新且三类内容创作任务名称全局唯一', async () => {
+    const screenplayWorkflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
+    assert.strictEqual(
+      screenplayWorkflow?.fields.find((field) => field.name === 'sourceTaskId')?.label,
+      '关联内容创作任务'
+    );
+
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-unique-task-name-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    try {
+      const project = database.createWorkProject({ name: '项目一', description: '' });
+      const otherProject = database.createWorkProject({ name: '项目二', description: '' });
+      const existingTask = database.saveRecord({
+        taskName: '同名任务',
+        categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+        categoryName: '创意写作',
+        projectId: project.id,
+        schema: [],
+        data: {}
+      });
+
+      assert.throws(
+        () => database.assertTaskNameUnique('同名任务', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES),
+        /任务名称已存在/
+      );
+      assert.throws(
+        () => database.assertTaskNameUnique(' 同名任务 ', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES),
+        /任务名称已存在/
+      );
+      assert.doesNotThrow(() => database.assertTaskNameUnique('同名任务', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES, existingTask.id));
+      assert.doesNotThrow(() => database.assertTaskNameUnique('其他任务', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES));
+
+      database.saveRecord({
+        taskName: '跨项目重名',
+        categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+        categoryName: '图片灵感写作',
+        projectId: otherProject.id,
+        schema: [],
+        data: {}
+      });
+      assert.throws(
+        () => database.assertTaskNameUnique('跨项目重名', UNIQUE_CONTENT_TASK_WORKFLOW_NAMES),
+        /任务名称已存在/
+      );
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('拍摄脚本关联当前项目已生成的剧本并传入剧本正文', async () => {
+    const workflow = formWorkflows.find((item) => item.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME);
+    assert.ok(workflow);
+    assert.strictEqual(workflow.requiresProject, true);
+    const screenplayField = workflow.fields.find((field) => field.name === 'screenplayTaskId');
+    assert.strictEqual(screenplayField?.label, '关联剧本任务');
+    assert.strictEqual(screenplayField?.placeholder, '请选择剧本创作任务');
+    assert.strictEqual(screenplayField?.projectTaskCategory, SCREENPLAY_WORKFLOW_NAME);
+    assert.strictEqual(screenplayField?.required, true);
+
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-shooting-source-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const project = database.createWorkProject({ name: '当前项目', description: '' });
+    const otherProject = database.createWorkProject({ name: '其他项目', description: '' });
+    const screenplay = database.saveRecord({
+      taskName: '已完成剧本',
+      categoryId: SCREENPLAY_WORKFLOW_NAME,
+      categoryName: '剧本创作',
+      projectId: project.id,
+      schema: [],
+      data: { taskName: '已完成剧本' }
+    });
+    database.updateGeneratedContent(screenplay.id, '剧本完整正文');
+    const otherProjectScreenplay = database.saveRecord({
+      taskName: '其他项目剧本',
+      categoryId: SCREENPLAY_WORKFLOW_NAME,
+      categoryName: '剧本创作',
+      projectId: otherProject.id,
+      schema: [],
+      data: { taskName: '其他项目剧本' }
+    });
+    database.updateGeneratedContent(otherProjectScreenplay.id, '其他项目正文');
+    database.saveRecord({
+      taskName: '尚未生成的剧本',
+      categoryId: SCREENPLAY_WORKFLOW_NAME,
+      categoryName: '剧本创作',
+      projectId: project.id,
+      schema: [],
+      data: { taskName: '尚未生成的剧本' }
+    });
+    const unrelatedTask = database.saveRecord({
+      taskName: '已生成的创意',
+      categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+      categoryName: '创意写作',
+      projectId: project.id,
+      schema: [],
+      data: { taskName: '已生成的创意' }
+    });
+    database.updateGeneratedContent(unrelatedTask.id, '创意正文');
+    const generatedTasks = database.listGeneratedContentTasks(
+      [SCREENPLAY_WORKFLOW_NAME, CREATIVE_WRITING_WORKFLOW_NAME],
+      []
+    );
+    const html = renderAddRecordFields(workflow, [project, otherProject], {
+      projectId: project.id
+    }, generatedTasks);
+    assert.ok(html.indexOf('name="projectId"') < html.indexOf('关联剧本任务'));
+    assert.ok(html.includes('>请选择剧本创作任务</option>'));
+    assert.ok(html.includes(`value="${screenplay.id}" data-project-id="${project.id}"`));
+    assert.ok(html.includes(`value="${otherProjectScreenplay.id}" data-project-id="${otherProject.id}" hidden`));
+    assert.ok(!html.includes(unrelatedTask.id));
+
+    const submissions = new WorkflowSubmissionStore();
+    const tool = new WorkflowFormTool(workflow, database, submissions);
+    const cancellationSource = new vscode.CancellationTokenSource();
+    try {
+      submissions.set(workflow.toolName, {
+        taskName: '拍摄脚本',
+        screenplayTaskId: screenplay.id,
+        aspectRatio: '9:16',
+        visualStyle: '',
+        additionalInfo: ''
+      }, undefined, project.id);
+      const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
+      const response = result.content[0];
+      assert.ok(response instanceof vscode.LanguageModelTextPart);
+      const parameters = JSON.parse(response.value).parameters;
+      assert.deepStrictEqual(parameters, {
+        aspectRatio: '9:16',
+        visualStyle: '',
+        additionalInfo: '',
+        scriptSource: '剧本完整正文'
+      });
+    } finally {
+      cancellationSource.dispose();
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
@@ -1095,7 +1236,7 @@ suite('AI视频创作助手扩展', () => {
         'taskName', 'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
-        'taskName', 'scriptSource', 'aspectRatio', 'visualStyle', 'additionalInfo'
+        'taskName', 'screenplayTaskId', 'aspectRatio', 'visualStyle', 'additionalInfo'
       ]
     };
 

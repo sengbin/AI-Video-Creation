@@ -222,7 +222,7 @@
       {
         "name": "ai-video-creation-tools_collect_shooting_script_parameters",
         "displayName": "收集拍摄脚本参数",
-        "modelDescription": "在拍摄脚本制作 Prompt 中调用。打开同屏表单收集任务名称、创作内容或剧本依据、画幅、镜头节奏、连续性、声音和视频生成模型要求，提交后直接编写完整逐镜头拍摄脚本，并为每个镜头提供图生视频提示词。任务名称必填，其余字段可留空。",
+        "modelDescription": "在拍摄脚本制作 Prompt 中调用。打开同屏表单收集任务名称、所属项目、该项目中已生成剧本的关联剧本任务、画幅、镜头节奏、连续性、声音和视频生成模型要求，提交后根据关联剧本编写完整逐镜头拍摄脚本，并为每个镜头提供图生视频提示词。任务名称、所属项目和关联剧本任务必填，其余字段可留空。",
         "userDescription": "打开拍摄脚本制作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_shooting_script_parameters",

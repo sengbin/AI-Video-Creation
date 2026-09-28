@@ -62,6 +62,7 @@ export interface WorkProject {
 export interface GeneratedContentTask {
   readonly id: string;
   readonly taskName: string;
+  readonly categoryId: string;
   readonly projectId: string;
 }
 
@@ -237,11 +238,16 @@ export class PromptDatabase implements vscode.Disposable {
     }
     conditions[1] += ')';
     const rows = this.connection.prepare(`
-      SELECT id, task_name, project_id FROM prompt_records
+      SELECT id, task_name, category_id, project_id FROM prompt_records
       WHERE ${conditions.join(' AND ')} AND project_id <> '0'
       ORDER BY created_at DESC, id DESC
-    `).all(...parameters) as { id: string; task_name: string; project_id: string }[];
-    return rows.map((row) => ({ id: row.id, taskName: row.task_name, projectId: row.project_id }));
+    `).all(...parameters) as { id: string; task_name: string; category_id: string; project_id: string }[];
+    return rows.map((row) => ({
+      id: row.id,
+      taskName: row.task_name,
+      categoryId: row.category_id,
+      projectId: row.project_id
+    }));
   }
 
   /**
@@ -278,6 +284,33 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.recordsChangedEmitter.fire();
     return this.getRecord(id);
+  }
+
+  /** 确保任务名称未被指定类别中的其他记录使用。 */
+  assertTaskNameUnique(
+    taskName: string,
+    categoryIds: readonly string[],
+    excludeRecordId?: string
+  ): void {
+    if (categoryIds.length === 0) {
+      return;
+    }
+
+    const conditions = [
+      `category_id IN (${categoryIds.map(() => '?').join(', ')})`,
+      'LOWER(TRIM(task_name)) = LOWER(TRIM(?))'
+    ];
+    const parameters = [...categoryIds, taskName];
+    if (excludeRecordId !== undefined) {
+      conditions.push('id <> ?');
+      parameters.push(excludeRecordId);
+    }
+    const existing = this.connection.prepare(`
+      SELECT 1 FROM prompt_records WHERE ${conditions.join(' AND ')} LIMIT 1
+    `).get(...parameters);
+    if (existing) {
+      throw new Error('任务名称已存在，请使用其他名称。');
+    }
   }
 
   /** 删除指定工作流中仍保存旧字段签名的冲突记录。 */

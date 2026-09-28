@@ -12,7 +12,8 @@ import {
   getWorkflowResultType,
   TASK_NAME_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
-  SHOOTING_SCRIPT_WORKFLOW_NAME
+  SHOOTING_SCRIPT_WORKFLOW_NAME,
+  UNIQUE_CONTENT_TASK_WORKFLOW_NAMES
 } from './formWorkflows';
 import { WorkflowSubmissionStore } from './workflowFormTool';
 
@@ -440,9 +441,16 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private assertProjectContentTask(workflow: FormWorkflow, values: FormValues, projectId: string): void {
     const sourceTaskField = workflow.fields.find((field) => field.projectContentTask);
     if (sourceTaskField && !this.listGeneratedContentTasks().some((task) =>
-      task.id === values[sourceTaskField.name] && task.projectId === projectId
+      task.id === values[sourceTaskField.name] && task.projectId === projectId &&
+      (!sourceTaskField.projectTaskCategory || task.categoryId === sourceTaskField.projectTaskCategory)
     )) {
       throw new Error('请选择当前项目中已有生成内容的创作任务。');
+    }
+  }
+
+  private assertUniqueContentTaskName(workflow: FormWorkflow, taskName: string, excludeRecordId?: string): void {
+    if (UNIQUE_CONTENT_TASK_WORKFLOW_NAMES.some((categoryId) => categoryId === workflow.toolName)) {
+      this.database.assertTaskNameUnique(taskName, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES, excludeRecordId);
     }
   }
 
@@ -459,6 +467,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('表单数据无效，请检查后重新提交。');
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
+      this.assertUniqueContentTaskName(workflow, values.taskName);
       this.database.saveRecord({
         taskName: values.taskName,
         categoryId: workflow.toolName,
@@ -494,16 +503,23 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const workflow = this.findWorkflow(record.categoryId);
     const savedFields = readFormFields(record.schema);
-    const fields = savedFields.some((field) => field.name === 'taskName')
+    const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME
+      ? workflow.fields
+      : savedFields.some((field) => field.name === 'taskName')
       ? savedFields
       : [TASK_NAME_FIELD, ...savedFields];
+    const editableFields = fields.map((field) =>
+      workflow.toolName === SCREENPLAY_WORKFLOW_NAME && field.name === 'sourceTaskId'
+        ? { ...field, label: '关联内容创作任务' }
+        : field
+    );
     const recordValues = readFormValues(record.data);
     const initialValues = {
       ...recordValues,
       taskName: record.taskName,
       projectId: record.projectId
     };
-    const editWorkflow: FormWorkflow = { ...workflow, fields };
+    const editWorkflow: FormWorkflow = { ...workflow, fields: editableFields };
     void session.panel.webview.postMessage({
       command: 'open-add-record-dialog',
       mode: 'edit',
@@ -526,10 +542,17 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       }
       const workflow = this.findWorkflow(record.categoryId);
       const savedFields = readFormFields(record.schema);
-      const fields = savedFields.some((field) => field.name === 'taskName')
+      const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME
+        ? workflow.fields
+        : savedFields.some((field) => field.name === 'taskName')
         ? savedFields
         : [TASK_NAME_FIELD, ...savedFields];
-      const values = validateWorkflowFormValues(message.values, { ...workflow, fields });
+      const editableFields = fields.map((field) =>
+        workflow.toolName === SCREENPLAY_WORKFLOW_NAME && field.name === 'sourceTaskId'
+          ? { ...field, label: '关联内容创作任务' }
+          : field
+      );
+      const values = validateWorkflowFormValues(message.values, { ...workflow, fields: editableFields });
       if (!values || typeof message.projectId !== 'string' ||
           (workflow.requiresProject && message.projectId === '0') ||
           (message.projectId !== '0' &&
@@ -537,10 +560,11 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('表单数据无效，请检查后重新提交。');
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
+      this.assertUniqueContentTaskName(workflow, values.taskName, record.id);
       const updatedRecord = this.database.updateRecord(record.id, {
         taskName: values.taskName,
         projectId: message.projectId,
-        schema: fields,
+        schema: editableFields,
         data: values
       });
       if (!updatedRecord) {
