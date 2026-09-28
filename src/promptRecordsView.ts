@@ -738,8 +738,8 @@ function createCategoryHtml(): string {
             <button id="create-collection" class="add" type="button">创建</button>
           </div>
           <div class="category-item">
-            <button class="select" type="button">模型配置（预览）</button>
-            <button class="add" type="button">添加</button>
+            <button id="open-model-config" class="select" type="button">模型配置（预览）</button>
+            <button id="add-model-config" class="add" type="button">添加</button>
           </div>
         </nav>
       </div>
@@ -766,13 +766,21 @@ function createCategoryHtml(): string {
     const settingsItem = document.querySelector('.config-card .category-item');
     const openCollectionsButton = document.getElementById('open-collections');
     const createCollectionButton = document.getElementById('create-collection');
+    const modelConfigItem = document.querySelectorAll('.config-card .category-item')[1];
+    const openModelConfigButton = document.getElementById('open-model-config');
+    const addModelConfigButton = document.getElementById('add-model-config');
     if (!(settingsItem instanceof HTMLElement) ||
         !(openCollectionsButton instanceof HTMLButtonElement) ||
-        !(createCollectionButton instanceof HTMLButtonElement)) {
+        !(createCollectionButton instanceof HTMLButtonElement) ||
+        !(modelConfigItem instanceof HTMLElement) ||
+        !(openModelConfigButton instanceof HTMLButtonElement) ||
+        !(addModelConfigButton instanceof HTMLButtonElement)) {
       throw new Error('设置菜单项缺失。');
     }
     bindPressedState(openCollectionsButton, settingsItem, true);
     bindPressedState(createCollectionButton, settingsItem, false);
+    bindPressedState(openModelConfigButton, modelConfigItem, true);
+    bindPressedState(addModelConfigButton, modelConfigItem, false);
     document.getElementById('open-collections').addEventListener('click', () => {
       vscode.postMessage({ command: 'open-collections' });
     });
