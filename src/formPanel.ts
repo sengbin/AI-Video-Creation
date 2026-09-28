@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WorkProject } from './database';
+import { GeneratedContentTask, WorkProject } from './database';
 import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
@@ -90,7 +90,8 @@ export function collectFormValues(
   workflow: FormWorkflow,
   token: vscode.CancellationToken,
   initialValues: FormValues = {},
-  projects: readonly WorkProject[] = []
+  projects: readonly WorkProject[] = [],
+  generatedContentTasks: readonly GeneratedContentTask[] = []
 ): Promise<FormSubmission | undefined> {
   if (token.isCancellationRequested) {
     return Promise.resolve(undefined);
@@ -106,7 +107,7 @@ export function collectFormValues(
     }
   );
 
-  panel.webview.html = createFormHtml(workflow, initialValues, projects);
+  panel.webview.html = createFormHtml(workflow, initialValues, projects, generatedContentTasks);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -141,8 +142,15 @@ export function collectFormValues(
 
       const values = validateWorkflowFormValues(message.values, workflow);
       const projectId = message.projectId;
+      const sourceTaskField = workflow.fields.find((field) => field.projectContentTask);
+      const invalidSourceTask = sourceTaskField && values !== undefined &&
+        !generatedContentTasks.some((task) =>
+          task.id === values[sourceTaskField.name] && task.projectId === projectId
+        );
       if (!values || typeof projectId !== 'string' ||
-          (projectId !== '0' && !projects.some((project) => project.id === projectId))) {
+          (workflow.requiresProject && projectId === '0') ||
+          (projectId !== '0' && !projects.some((project) => project.id === projectId)) ||
+          invalidSourceTask) {
         void panel.webview.postMessage({
           command: 'validation-error',
           text: '表单数据无效，请检查后重新提交。'
@@ -221,7 +229,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function createFormHtml(
   workflow: FormWorkflow,
   initialValues: FormValues,
-  projects: readonly WorkProject[]
+  projects: readonly WorkProject[],
+  generatedContentTasks: readonly GeneratedContentTask[]
 ): string {
   const nonce = createNonce();
   const imageAttachments = workflow.supportsImageAttachments
@@ -235,10 +244,16 @@ function createFormHtml(
         <p class="image-status" id="image-status" role="status" aria-live="polite"></p>
       </section>`
     : '';
-  const fields = workflow.fields.map((field) =>
-    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '')
+  const defaultProjectId = workflow.requiresProject ? projects[0]?.id ?? '' : '0';
+  const selectedProjectId = initialValues.projectId ?? defaultProjectId;
+  const projectContentTaskField = workflow.fields
+    .filter((field) => field.projectContentTask)
+    .map((field) => renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId))
+    .join('');
+  const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
+    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
   ).join('');
-  const projectField = renderWorkProjectField(projects, initialValues.projectId ?? '0');
+  const projectField = renderWorkProjectField(projects, initialValues.projectId ?? defaultProjectId, workflow.requiresProject === true);
   const runButton = workflow.showRunButton === false
     ? ''
     : '<button class="primary" id="submit" type="submit">保存并运行</button>';
@@ -384,6 +399,7 @@ function createFormHtml(
     <p class="notice">${escapeHtml(workflow.notice)}选择“保存并运行”后，Copilot 将使用表单内容继续执行。</p>
     <form id="parameter-form">
       ${projectField}
+      ${projectContentTaskField}
       ${imageAttachmentField}
       ${fields}
       <div id="status" role="status" aria-live="polite"></div>
@@ -410,6 +426,16 @@ function createFormHtml(
     const projectPickerLabel = document.getElementById('project-picker-label');
     const projectPickerMenu = document.getElementById('project-picker-menu');
     const projectPickerOptions = Array.from(projectPickerMenu.querySelectorAll('[role="option"]'));
+    function updateProjectContentTaskOptions() {
+      document.querySelectorAll('[data-project-content-task]').forEach((select) => {
+        Array.from(select.options).forEach((option) => {
+          if (option.dataset.projectId) option.hidden = option.dataset.projectId !== projectSelect.value;
+        });
+        if (select.selectedOptions[0]?.dataset.projectId !== projectSelect.value) select.value = '';
+      });
+    }
+    projectSelect.addEventListener('change', updateProjectContentTaskOptions);
+    updateProjectContentTaskOptions();
     function closeProjectPicker(returnFocus = false) {
       projectPickerMenu.hidden = true;
       projectPickerTrigger.setAttribute('aria-expanded', 'false');
@@ -620,6 +646,11 @@ function createFormHtml(
 
     function sendFormValues(runPrompt) {
       if (runPrompt && !canRunPrompt) return;
+      const projectId = projectSelect.value;
+      if (${workflow.requiresProject === true} && !projectId) {
+        status.textContent = '请先选择所属项目。';
+        return;
+      }
       if (!form.reportValidity()) {
         return;
       }
@@ -627,7 +658,6 @@ function createFormHtml(
       const values = Object.fromEntries(
         [...formData.entries()].filter(([name]) => name !== 'projectId' && !name.endsWith('__custom'))
       );
-      const projectId = formData.get('projectId');
       document.querySelectorAll('[data-custom-input]').forEach((select) => {
         if (select.value === '${CUSTOM_OPTION_VALUE}') {
           const customInput = document.getElementById(select.dataset.customInput);
@@ -697,9 +727,9 @@ function createFormHtml(
 }
 
 /** 生成固定在任务参数表单顶部的项目归属选择项。 */
-function renderWorkProjectField(projects: readonly WorkProject[], selectedWorkProjectId: string): string {
+function renderWorkProjectField(projects: readonly WorkProject[], selectedWorkProjectId: string, required: boolean): string {
   const options = [
-    { id: '0', name: '未归属项目', isScopeOption: true },
+    ...(!required ? [{ id: '0', name: '未归属项目', isScopeOption: true }] : []),
     ...projects.map((project) => ({ id: project.id, name: project.name, isScopeOption: false }))
   ];
   const nativeOptions = options.map((option) =>
@@ -716,8 +746,8 @@ function renderWorkProjectField(projects: readonly WorkProject[], selectedWorkPr
     <div class="field-heading"><span class="field-label" id="projectId-label">所属项目</span></div>
     <div class="project-picker" id="project-picker">
       <select id="projectId" name="projectId" hidden aria-hidden="true" tabindex="-1">${nativeOptions}</select>
-      <button class="project-picker-trigger${selectedOption.isScopeOption ? ' is-scope-option' : ''}" id="project-picker-trigger" type="button" aria-labelledby="projectId-label project-picker-label" aria-haspopup="listbox" aria-controls="project-picker-menu" aria-expanded="false">
-        <span class="project-picker-label" id="project-picker-label">${escapeHtml(selectedOption.name)}</span>
+      <button class="project-picker-trigger${selectedOption?.isScopeOption ? ' is-scope-option' : ''}" id="project-picker-trigger" type="button" aria-labelledby="projectId-label project-picker-label" aria-haspopup="listbox" aria-controls="project-picker-menu" aria-expanded="false">
+        <span class="project-picker-label" id="project-picker-label">${escapeHtml(selectedOption?.name ?? '请选择项目')}</span>
         <span class="project-picker-chevron" aria-hidden="true"></span>
       </button>
       <div class="project-picker-menu" id="project-picker-menu" role="listbox" aria-labelledby="projectId-label" hidden>${pickerOptions}</div>
@@ -733,7 +763,12 @@ function serializeForScript(value: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
-function renderField(field: FormField, initialValue: string): string {
+function renderField(
+  field: FormField,
+  initialValue: string,
+  generatedContentTasks: readonly GeneratedContentTask[] = [],
+  selectedProjectId = '0'
+): string {
   const name = escapeHtml(field.name);
   const label = escapeHtml(field.label);
   const description = escapeHtml(field.description);
@@ -742,7 +777,12 @@ function renderField(field: FormField, initialValue: string): string {
   const numericAttributes = field.inputType === 'number'
     ? ` type="number" step="1" inputmode="numeric"${field.min === undefined ? '' : ` min="${field.min}"`}${field.max === undefined ? '' : ` max="${field.max}"`}`
     : '';
-  const control = field.options
+  const control = field.projectContentTask
+    ? `<select id="${name}" name="${name}" data-project-content-task${required}>${[
+      `<option value=""${initialValue === '' ? ' selected' : ''}>请选择创作任务</option>`,
+      ...generatedContentTasks.map((task) => `<option value="${escapeHtml(task.id)}" data-project-id="${escapeHtml(task.projectId)}"${task.projectId !== selectedProjectId ? ' hidden' : ''}${task.id === initialValue ? ' selected' : ''}>${escapeHtml(task.title)}</option>`)
+    ].join('')}</select>`
+    : field.options
     ? `<div class="select-with-custom">
         <select id="${name}" name="${name}"${required}${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
           <option value=""${initialValue === '' ? ' selected' : ''}>请选择</option>
@@ -788,20 +828,28 @@ function createNonce(): string {
 export function renderAddRecordFields(
   workflow: FormWorkflow,
   projects: readonly WorkProject[],
-  initialValues: FormValues = {}
+  initialValues: FormValues = {},
+  generatedContentTasks: readonly GeneratedContentTask[] = []
 ): string {
   const projectOptions = [
-    `<option value="0"${(initialValues.projectId ?? '0') === '0' ? ' selected' : ''}>未归属项目</option>`,
+    ...(workflow.requiresProject
+      ? [`<option value=""${initialValues.projectId ? '' : ' selected'}>请选择所属项目</option>`]
+      : []),
+    ...(!workflow.requiresProject ? [`<option value="0"${(initialValues.projectId ?? '0') === '0' ? ' selected' : ''}>未归属项目</option>`] : []),
     ...projects.map((project) =>
       `<option value="${escapeHtml(project.id)}"${initialValues.projectId === project.id ? ' selected' : ''}>${escapeHtml(project.name)}</option>`
     )
   ].join('');
+  const selectedProjectId = initialValues.projectId ?? (workflow.requiresProject ? '' : '0');
   const projectField = `<div class="field">
     <div class="field-heading"><label for="add-record-project">所属项目</label></div>
-    <select id="add-record-project" name="projectId">${projectOptions}</select>
+    <select id="add-record-project" name="projectId"${workflow.requiresProject ? ' required' : ''}>${projectOptions}</select>
   </div>`;
-  const fields = workflow.fields.map((field) =>
-    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '')
+  const projectContentTaskFields = workflow.fields.filter((field) => field.projectContentTask).map((field) =>
+    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
+  ).join('');
+  const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
+    renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId)
   ).join('');
   const imageField = workflow.supportsImageAttachments
     ? `<section class="add-image-area" aria-label="图片附件">
@@ -812,5 +860,5 @@ export function renderAddRecordFields(
         <p id="add-image-status" role="status" aria-live="polite"></p>
       </section>`
     : '';
-  return `${projectField}${fields}${imageField}`;
+  return `${projectField}${projectContentTaskFields}${fields}${imageField}`;
 }

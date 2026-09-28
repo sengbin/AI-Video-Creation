@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WorkProject, PromptDatabase, PromptRecord } from './database';
+import { GeneratedContentTask, WorkProject, PromptDatabase, PromptRecord } from './database';
 import {
   renderAddRecordFields,
   validateWorkflowFormValues
@@ -241,7 +241,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
     if (message.command === 'project-filter') {
       if (typeof message.projectId !== 'string' ||
-          (message.projectId !== 'all' && message.projectId !== '0' &&
+          (message.projectId !== 'all' &&
            !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
         throw new Error('项目筛选条件无效。');
       }
@@ -421,9 +421,29 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       command: 'open-add-record-dialog',
       categoryId: workflow.toolName,
       title: `添加${workflow.title}信息`,
-      formFields: renderAddRecordFields(workflow, this.database.listWorkProjects()),
+      formFields: renderAddRecordFields(workflow, this.database.listWorkProjects(), {}, this.listGeneratedContentTasks()),
       supportsImageAttachments: workflow.supportsImageAttachments === true
     });
+  }
+
+  private listGeneratedContentTasks(): GeneratedContentTask[] {
+    const contentWorkflows = this.workflows.filter((workflow) => workflow.resultType === 'content');
+    const chapterWorkflowIds = contentWorkflows
+      .filter((workflow) => workflow.supportsChapterContent === true)
+      .map((workflow) => workflow.toolName);
+    return this.database.listGeneratedContentTasks(
+      contentWorkflows.map((workflow) => workflow.toolName),
+      chapterWorkflowIds
+    );
+  }
+
+  private assertProjectContentTask(workflow: FormWorkflow, values: FormValues, projectId: string): void {
+    const sourceTaskField = workflow.fields.find((field) => field.projectContentTask);
+    if (sourceTaskField && !this.listGeneratedContentTasks().some((task) =>
+      task.id === values[sourceTaskField.name] && task.projectId === projectId
+    )) {
+      throw new Error('请选择当前项目中已有生成内容的创作任务。');
+    }
   }
 
   private saveAddedRecord(message: ViewMessage, session: RecordsPanelSession): void {
@@ -433,10 +453,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       workflow = this.findWorkflow(message.categoryId);
       values = validateWorkflowFormValues(message.values, workflow);
       if (!values || typeof message.projectId !== 'string' ||
+          (workflow.requiresProject && message.projectId === '0') ||
           (message.projectId !== '0' &&
            !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
         throw new Error('表单数据无效，请检查后重新提交。');
       }
+      this.assertProjectContentTask(workflow, values, message.projectId);
       this.database.saveRecord({
         title: values.title,
         categoryId: workflow.toolName,
@@ -488,7 +510,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       recordId: record.id,
       categoryId: workflow.toolName,
       title: `编辑${workflow.title}信息`,
-      formFields: renderAddRecordFields(editWorkflow, this.database.listWorkProjects(), initialValues),
+      formFields: renderAddRecordFields(editWorkflow, this.database.listWorkProjects(), initialValues, this.listGeneratedContentTasks()),
       supportsImageAttachments: workflow.supportsImageAttachments === true
     });
   }
@@ -509,10 +531,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         : [RECORD_TITLE_FIELD, ...savedFields];
       const values = validateWorkflowFormValues(message.values, { ...workflow, fields });
       if (!values || typeof message.projectId !== 'string' ||
+          (workflow.requiresProject && message.projectId === '0') ||
           (message.projectId !== '0' &&
            !this.database.listWorkProjects().some((project) => project.id === message.projectId))) {
         throw new Error('表单数据无效，请检查后重新提交。');
       }
+      this.assertProjectContentTask(workflow, values, message.projectId);
       const updatedRecord = this.database.updateRecord(record.id, {
         title: values.title,
         projectId: message.projectId,
@@ -546,6 +570,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
 
     const workflow = this.findWorkflow(record.categoryId);
+    if (workflow.requiresProject && record.projectId === '0') {
+      throw new Error('剧本创作记录必须归属项目后才能运行。');
+    }
+    this.assertProjectContentTask(workflow, readFormValues(record.data), record.projectId);
     await this.runSubmittedPrompt(workflow, readFormValues(record.data), record.id);
   }
 
@@ -1098,7 +1126,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
     .delete-button:hover { background: var(--vscode-toolbar-hoverBackground); }
     .delete-button:focus-visible { outline: none; background: var(--vscode-toolbar-hoverBackground); }
-    .empty { padding: 24px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
+    .empty { width: 100%; padding: 24px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
     dialog {
       position: fixed; inset: 50% auto auto 50%; display: flex; width: min(480px, calc(100vw - 32px)); max-width: calc(100vw - 32px);
@@ -1265,6 +1293,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">项目名称</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="chapter-content-action-column">操作</span><span class="row-action-column">操作</span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
+        <div id="empty-state" class="empty" role="status" hidden>暂无保存的数据</div>
       </div>
     </section>
     <section id="projects-section" class="project-table" aria-live="polite" hidden>
@@ -1443,6 +1472,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const workflowTitles = ${JSON.stringify(Object.fromEntries(workflows.map((workflow) => [workflow.toolName, workflow.title])))};
     const recordList = document.getElementById('record-list');
     const recordsTable = document.getElementById('records-table');
+    const emptyState = document.getElementById('empty-state');
     const projectList = document.getElementById('project-list');
     const recordsSection = document.getElementById('records-section');
     const projectsSection = document.getElementById('projects-section');
@@ -1628,6 +1658,20 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       addRecordCategoryId = message.categoryId;
       addRecordTitle.textContent = message.title;
       addRecordFields.innerHTML = message.formFields;
+      const sourceTaskSelect = addRecordFields.querySelector('[data-project-content-task]');
+      const projectSelect = document.getElementById('add-record-project');
+      if (sourceTaskSelect && projectSelect) {
+        const updateSourceTasks = () => {
+          Array.from(sourceTaskSelect.options).forEach((option) => {
+            if (option.dataset.projectId) option.hidden = option.dataset.projectId !== projectSelect.value;
+          });
+          if (sourceTaskSelect.selectedOptions[0]?.dataset.projectId !== projectSelect.value) {
+            sourceTaskSelect.value = '';
+          }
+        };
+        projectSelect.addEventListener('change', updateSourceTasks);
+        updateSourceTasks();
+      }
       addRecordError.textContent = '';
       addRecordError.hidden = true;
       addRecordSaveButton.disabled = false;
@@ -2110,21 +2154,19 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       projectsSection.hidden = state.viewMode !== 'projects';
       renderProjectFilter([
         { value: 'all', label: '所有内容', isScopeOption: true },
-        { value: '0', label: '未归属项目', isScopeOption: true },
         ...projects.map((project) => ({ value: project.id, label: project.name }))
       ], state.projectFilter);
       if (state.viewMode === 'projects') {
+        emptyState.hidden = true;
         renderWorkProjects(projects);
         return;
       }
       recordList.replaceChildren();
       if (!state.records.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = '暂无保存的数据';
-        recordList.append(empty);
+        emptyState.hidden = false;
         return;
       }
+      emptyState.hidden = true;
 
       for (const record of state.records) {
         const row = document.createElement('div');

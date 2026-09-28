@@ -11,13 +11,25 @@ import { collectFormValues, parseImageAttachments } from './formPanel';
 import {
   FormValues,
   FormWorkflow,
+  formWorkflows,
   getWorkflowResultType,
   isChapterContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
+  SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
 
 type EmptyToolInput = Record<string, never>;
+
+function listGeneratedContentTasks(database: PromptDatabase) {
+  const contentWorkflows = formWorkflows.filter((workflow) => workflow.resultType === 'content');
+  return database.listGeneratedContentTasks(
+    contentWorkflows.map((workflow) => workflow.toolName),
+    contentWorkflows
+      .filter((workflow) => workflow.supportsChapterContent === true)
+      .map((workflow) => workflow.toolName)
+  );
+}
 
 /** 等待工作流参数工具读取的已提交表单与记录关联信息。 */
 export interface WorkflowSubmission {
@@ -130,12 +142,15 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
         this.workflow,
         token,
         {},
-        this.database.listWorkProjects()
+        this.database.listWorkProjects(),
+        listGeneratedContentTasks(this.database)
       );
     const values = submission?.values;
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
     const parameters: Record<string, string | number> | undefined = values
-      ? Object.fromEntries(Object.entries(values).filter(([name]) => name !== IMAGE_ATTACHMENTS_FIELD))
+      ? Object.fromEntries(Object.entries(values).filter(([name]) =>
+        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId'
+      ))
       : undefined;
     if (parameters) {
       for (const field of this.workflow.fields) {
@@ -143,6 +158,25 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
           parameters[field.name] = Number(parameters[field.name]);
         }
       }
+    }
+    if (parameters && values && submission?.runPrompt && this.workflow.toolName === SCREENPLAY_WORKFLOW_NAME) {
+      const sourceTask = listGeneratedContentTasks(this.database)
+        .find((task) => task.id === values.sourceTaskId && task.projectId === submission.projectId);
+      if (!sourceTask) {
+        throw new Error('关联创作任务不存在、未生成内容或不属于所选项目。');
+      }
+      const sourceRecord = this.database.getRecord(sourceTask.id);
+      if (!sourceRecord) {
+        throw new Error('关联创作任务已不存在。');
+      }
+      const chapters = this.database.listGeneratedChapterContents(sourceTask.id);
+      const generatedContent = sourceRecord.generatedResultContent?.trim() || chapters
+        .map((chapter) => `第${chapter.chapterNumber}集：${chapter.title}\n${chapter.content}`)
+        .join('\n\n');
+      if (!generatedContent.trim()) {
+        throw new Error('关联创作任务没有可用的生成内容。');
+      }
+      parameters.sourceMaterial = `以下为项目“${this.database.listWorkProjects().find((project) => project.id === submission.projectId)?.name ?? ''}”中关联任务“${sourceTask.title}”生成的完整内容：\n${generatedContent}`;
     }
     let recordId = submitted?.recordId;
     if (values && !submitted) {

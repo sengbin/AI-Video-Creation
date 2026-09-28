@@ -16,6 +16,7 @@ import {
   CREATIVE_WRITING_WORKFLOW_NAME,
   IMAGE_ATTACHMENTS_FIELD,
   IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from '../../formWorkflows';
 import {
@@ -26,6 +27,51 @@ import {
 } from '../../workflowFormTool';
 
 suite('AI视频创作助手扩展', () => {
+  test('剧本表单要求项目并只列出已有生成内容的项目任务', async () => {
+    const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
+    assert.ok(workflow);
+    assert.strictEqual(workflow.requiresProject, true);
+    assert.ok(!workflow.fields.some((field) => field.name === 'format' || field.name === 'duration'));
+    assert.ok(workflow.fields.some((field) => field.name === 'maxEpisodeDurationSeconds' && field.required));
+    assert.ok(!workflow.fields.some((field) => field.name === 'episodeDurationSeconds'));
+    assert.ok(workflow.fields.some((field) => field.name === 'maxEpisodes' && field.required));
+    assert.ok(workflow.fields.some((field) => field.name === 'genre' && field.allowCustom));
+    assert.ok(workflow.fields.some((field) => field.name === 'style' && field.allowCustom));
+
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-screenplay-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    try {
+      const project = database.createWorkProject({ name: '剧本项目', description: '' });
+      const task = database.saveRecord({
+        title: '故事创意',
+        categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+        categoryName: '创意写作',
+        projectId: project.id,
+        schema: [{ name: 'title' }],
+        data: { title: '故事创意' }
+      });
+      database.updateGeneratedContent(task.id, '完整生成正文');
+      database.saveRecord({
+        title: '尚未生成的任务',
+        categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+        categoryName: '创意写作',
+        projectId: project.id,
+        schema: [{ name: 'title' }],
+        data: { title: '尚未生成的任务' }
+      });
+
+      const tasks = database.listGeneratedContentTasks([CREATIVE_WRITING_WORKFLOW_NAME], []);
+      assert.deepStrictEqual(tasks.map((item) => item.id), [task.id]);
+      const html = renderAddRecordFields(workflow, [project], {}, tasks);
+      assert.ok(!html.includes('未归属项目'));
+      assert.ok(html.includes('name="projectId" required'));
+      assert.ok(html.includes(`value="${task.id}" data-project-id="${project.id}"`));
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('列表添加对话框渲染任务字段并复用工作流校验', () => {
     const workflow = formWorkflows.find((item) => item.toolName === CREATIVE_WRITING_WORKFLOW_NAME);
     const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
@@ -562,6 +608,57 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
+  test('剧本运行时将关联任务的全部分集正文并入创作素材', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-screenplay-source-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const project = database.createWorkProject({ name: '测试项目', description: '' });
+    const sourceRecord = database.saveRecord({
+      title: '分集创意',
+      categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+      categoryName: '创意写作',
+      projectId: project.id,
+      schema: [],
+      data: { title: '分集创意' }
+    });
+    database.saveGeneratedChapterContents(sourceRecord.id, [
+      { chapterNumber: 1, title: '第一集', content: '第一集完整正文' },
+      { chapterNumber: 2, title: '第二集', content: '第二集完整正文' }
+    ]);
+    const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
+    assert.ok(workflow);
+    assert.ok(!workflow.fields.some((field) => field.name === 'sourceMaterial'));
+    const submissions = new WorkflowSubmissionStore();
+    const tool = new WorkflowFormTool(workflow, database, submissions);
+    const cancellationSource = new vscode.CancellationTokenSource();
+
+    try {
+      submissions.set(workflow.toolName, {
+        title: '改编剧本',
+        sourceTaskId: sourceRecord.id,
+        sourceMaterial: '不应使用的旧手填素材',
+        maxEpisodeDurationSeconds: '60',
+        maxEpisodes: '2',
+        genre: '悬疑',
+        style: '写实自然',
+        additionalInfo: ''
+      }, undefined, project.id);
+      const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
+      const textPart = result.content[0];
+      assert.ok(textPart instanceof vscode.LanguageModelTextPart);
+      const parameters = JSON.parse(textPart.value).parameters;
+      assert.ok(parameters.sourceMaterial.includes('第一集完整正文'));
+      assert.ok(parameters.sourceMaterial.includes('第二集完整正文'));
+      assert.ok(!parameters.sourceMaterial.includes('不应使用的旧手填素材'));
+      assert.strictEqual(parameters.sourceTaskId, undefined);
+      assert.strictEqual(parameters.maxEpisodeDurationSeconds, 60);
+      assert.strictEqual(parameters.maxEpisodes, 2);
+    } finally {
+      cancellationSource.dispose();
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('能够将图片灵感写作附件作为图像内容交给 Copilot', async () => {
     const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-image-submission-'));
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
@@ -963,7 +1060,7 @@ suite('AI视频创作助手扩展', () => {
         'title', 'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_screenplay_parameters': [
-        'title', 'sourceMaterial', 'format', 'genre', 'duration', 'additionalInfo'
+        'title', 'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'genre', 'style', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
         'title', 'scriptSource', 'duration', 'aspectRatio', 'visualStyle', 'cameraStyle', 'additionalInfo'

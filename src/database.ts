@@ -56,6 +56,13 @@ export interface WorkProject {
   readonly updatedAt: string;
 }
 
+/** 可作为剧本创作素材来源的已生成内容任务。 */
+export interface GeneratedContentTask {
+  readonly id: string;
+  readonly title: string;
+  readonly projectId: string;
+}
+
 /** 创建项目时需要保存的字段。 */
 export interface NewWorkProject {
   readonly name: string;
@@ -196,6 +203,32 @@ export class PromptDatabase implements vscode.Disposable {
     `).all(...parameters);
 
     return (rows as unknown as StoredPromptRecord[]).map(readRecord);
+  }
+
+  /** 查询指定内容类工作流中已有生成结果的任务。 */
+  listGeneratedContentTasks(categoryIds: readonly string[], chapterCategoryIds: readonly string[]): GeneratedContentTask[] {
+    if (categoryIds.length === 0) {
+      return [];
+    }
+
+    const parameters: string[] = [...categoryIds];
+    const conditions = [
+      `category_id IN (${categoryIds.map(() => '?').join(', ')})`,
+      "((generated_result_content IS NOT NULL AND TRIM(generated_result_content) <> '')"
+    ];
+    if (chapterCategoryIds.length > 0) {
+      conditions[1] += ` OR (category_id IN (${chapterCategoryIds.map(() => '?').join(', ')}) AND EXISTS (
+        SELECT 1 FROM generated_chapter_contents chapters WHERE chapters.record_id = prompt_records.id
+      ))`;
+      parameters.push(...chapterCategoryIds);
+    }
+    conditions[1] += ')';
+    const rows = this.connection.prepare(`
+      SELECT id, title, project_id FROM prompt_records
+      WHERE ${conditions.join(' AND ')} AND project_id <> '0' AND title IS NOT NULL
+      ORDER BY created_at DESC, id DESC
+    `).all(...parameters) as { id: string; title: string; project_id: string }[];
+    return rows.map((row) => ({ id: row.id, title: row.title, projectId: row.project_id }));
   }
 
   /**

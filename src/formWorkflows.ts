@@ -11,6 +11,7 @@ export interface FormField {
   readonly max?: number;
   readonly options?: readonly string[];
   readonly allowCustom?: boolean;
+  readonly projectContentTask?: boolean;
   readonly required?: boolean;
 }
 
@@ -21,6 +22,8 @@ export interface FormWorkflow {
   readonly resultType: WorkflowResultType;
   readonly notice: string;
   readonly fields: readonly FormField[];
+  /** 是否要求参数表单必须归属一个项目。 */
+  readonly requiresProject?: boolean;
   /** 是否在参数表单中显示“保存并运行”按钮。 */
   readonly showRunButton?: boolean;
   /** 参数表单是否接受用户附加图片。 */
@@ -240,7 +243,8 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '剧本创作',
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
-    notice: '作品名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。创作灵感或原作也可以粘贴到聊天或作为附件提供。',
+    requiresProject: true,
+    notice: '作品名称、所属项目、关联创作任务、单集最大时长和最大总集数为必填项；单集最大时长是上限，剧本时长将按内容决定。',
     fields: [
       {
         ...RECORD_TITLE_FIELD,
@@ -248,10 +252,11 @@ export const formWorkflows: readonly FormWorkflow[] = [
         description: '必填，填写短片、电影或电视剧的片名',
         placeholder: '输入作品名称'
       },
-      { name: 'sourceMaterial', label: '创作灵感或原作材料', description: '填写创意、梗概或改编依据；长篇材料可附加到聊天', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
-      { name: 'format', label: '剧本形态', description: '填写短片、短剧单集、分集剧本等', placeholder: '例如：10分钟悬疑短片剧本' },
-      { name: 'genre', label: '题材类型', description: '填写剧本题材', placeholder: '例如：悬疑科幻' },
-      { name: 'duration', label: '目标时长或集数', description: '填写总时长、集数及单集时长', placeholder: '例如：总长10分钟；或6集、每集约5分钟' },
+      { name: 'sourceTaskId', label: '关联创作任务', description: '选择当前项目中已有生成内容的任务，生成内容将作为剧本创作素材', placeholder: '请选择创作任务', projectContentTask: true, required: true },
+      { name: 'maxEpisodeDurationSeconds', label: '单集最大时长（秒）', description: '填写每集时长上限；Copilot 将按内容分析合理时长，不会为达到上限而扩写', placeholder: '例如：60', inputType: 'number', min: 1, required: true },
+      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限；短片或电影填写1', placeholder: '例如：1', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
+      { name: 'genre', label: '题材类型', description: '选择剧本题材，也可选择其他后手动输入', options: ['剧情', '喜剧', '爱情', '悬疑', '犯罪', '科幻', '奇幻', '动作', '惊悚', '动画', '纪录片', '家庭', '历史'], allowCustom: true },
+      { name: 'style', label: '表达风格', description: '选择剧本表达风格，也可选择其他后手动输入', options: ['现实主义', '轻松幽默', '温情治愈', '悬疑紧张', '热血励志', '浪漫唯美', '黑色幽默', '荒诞讽刺', '诗意含蓄', '写实自然'], allowCustom: true },
       { name: 'additionalInfo', label: '补充要求', description: '填写人物、冲突、主题、保留项、结局或内容边界等其他要求', placeholder: '例如：保留灯塔和未来求救信号设定，避免血腥描写' }
     ]
   },

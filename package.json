@@ -214,7 +214,7 @@
       {
         "name": "ai-video-creation-tools_collect_screenplay_parameters",
         "displayName": "收集剧本创作参数",
-        "modelDescription": "在剧本创作 Prompt 中调用。打开同屏表单收集记录标题、创作内容或原作材料、剧本形态、时长、人物、冲突、保留项和交付要求，提交后直接创作完整影视剧本。记录标题必填，其余字段可留空。",
+        "modelDescription": "在剧本创作 Prompt 中调用。打开同屏表单收集作品名称、所属项目、关联的已生成内容任务、单集最大时长、最大总集数、题材、表达风格和补充要求；根据关联内容分析合理时长，不为达到上限而扩写，必要时按内容调整时长。作品名称、所属项目、关联任务、单集最大时长和最大总集数必填。",
         "userDescription": "打开剧本创作参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_screenplay_parameters",

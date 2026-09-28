@@ -11,7 +11,7 @@
 
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
-import { formWorkflows } from './formWorkflows';
+import { formWorkflows, SCREENPLAY_WORKFLOW_NAME } from './formWorkflows';
 import { PromptRecordsViewProvider } from './promptRecordsView';
 import {
   GeneratedResultTool,
@@ -31,6 +31,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   database.deleteRecordsWithConflictingFields(
     formWorkflows.filter((workflow) => workflow.supportsChapterContent === true).map((workflow) => workflow.toolName),
     ['episodeDurationSeconds', 'maxEpisodes']
+  );
+  database.deleteRecordsWithConflictingFields(
+    [SCREENPLAY_WORKFLOW_NAME],
+    ['format', 'duration', 'sourceMaterial', 'episodeDurationSeconds']
   );
   const submissions = new WorkflowSubmissionStore();
   const recordsView = new PromptRecordsViewProvider(
