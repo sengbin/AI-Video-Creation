@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { GeneratedContentTask, PromptDatabase, PromptRecord, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './database';
 import {
+  parseOriginalSourceFile,
   renderAddRecordFields,
   validateWorkflowFormValues
 } from './formPanel';
@@ -10,6 +11,7 @@ import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
+  ORIGINAL_SOURCE_FILE_FIELD,
   TASK_NAME_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
@@ -596,8 +598,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (workflow.requiresProject && record.projectId === '0') {
       throw new Error('剧本创作记录必须归属项目后才能运行。');
     }
-    this.assertProjectContentTask(workflow, readFormValues(record.data), record.projectId);
-    await this.runSubmittedPrompt(workflow, readFormValues(record.data), record.id);
+    const values = readFormValues(record.data);
+    this.assertProjectContentTask(workflow, values, record.projectId);
+    if (workflow.supportsOriginalSourceFile && !parseOriginalSourceFile(values[ORIGINAL_SOURCE_FILE_FIELD])) {
+      throw new Error('请先编辑任务并上传原作 TXT 或 Markdown 文件，再运行小说重创作。');
+    }
+    await this.runSubmittedPrompt(workflow, values, record.id);
   }
 
   /** 将已提交参数及其记录标识交给对应的 Prompt 工具并启动提示词。 */
@@ -1245,6 +1251,20 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .add-image-area .image-add { display: grid; place-items: center; padding: 0; color: var(--vscode-descriptionForeground); background: var(--vscode-input-background); border-style: dashed; font-size: 26px; }
     .add-image-area .image-status { min-height: 0; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
     .add-image-area .image-status:empty { display: none; }
+    .add-source-area { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; }
+    .add-source-area .source-heading { display: grid; gap: 4px; }
+    .add-source-area .source-heading span, .add-source-name { color: var(--vscode-descriptionForeground); font-size: 12px; overflow-wrap: anywhere; }
+    .add-source-area input[type="file"] { display: none; }
+    .add-source-area .source-controls { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .add-source-area .source-select, .add-source-area .source-remove { min-height: 22px; padding: 0 8px; border: 0; border-radius: 3px; font-size: 12px; cursor: pointer; }
+    .add-source-area .source-select { color: var(--vscode-button-secondaryForeground); background: rgba(90,90,90,0.14); }
+    .add-source-area .source-select:hover { background: rgba(90,90,90,0.20); }
+    .add-source-area .source-remove { color: var(--vscode-errorForeground); background: transparent; }
+    .add-source-area .source-remove:hover { background: var(--vscode-toolbar-hoverBackground); }
+    body.vscode-dark .add-source-area .source-select { background: rgba(255,255,255,0.08); }
+    body.vscode-dark .add-source-area .source-select:hover { background: rgba(255,255,255,0.12); }
+    .add-source-area .source-status { min-height: 0; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
+    .add-source-area .source-status:empty { display: none; }
     .add-record-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .add-record-error[hidden] { display: none; }
     #chapter-content-dialog { width: min(840px, calc(100vw - 32px)); }
@@ -1575,6 +1595,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     let addRecordMode = 'add';
     let editingRecordId;
     let addImageAttachments = [];
+    let addRecordSourceFileReadPending = false;
     const copyFeedbackTimers = new WeakMap();
 
     document.querySelectorAll('dialog').forEach((dialog) => {
@@ -1704,6 +1725,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       addRecordError.hidden = true;
       addRecordSaveButton.disabled = false;
       addImageAttachments = [];
+      addRecordSourceFileReadPending = false;
       const imageValue = document.getElementById('add-image-value');
       if (imageValue) addImageAttachments = JSON.parse(imageValue.value);
 
@@ -1738,6 +1760,62 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         });
         renderAddRecordImages();
       }
+      const sourceFileInput = document.getElementById('add-source-file-input');
+      if (sourceFileInput) {
+        const sourceValue = document.getElementById('add-source-value');
+        const sourceName = document.getElementById('add-source-name');
+        const sourceStatus = document.getElementById('add-source-status');
+        const removeSourceButton = document.getElementById('remove-add-source');
+        function formatSourceFileSize(sizeBytes) {
+          return sizeBytes < 1024 * 1024
+            ? (sizeBytes / 1024).toFixed(1) + ' KB'
+            : (sizeBytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        const renderSourceFile = () => {
+          const source = sourceValue.value ? JSON.parse(sourceValue.value) : undefined;
+          sourceName.textContent = source
+            ? source.name + ' (' + formatSourceFileSize(new TextEncoder().encode(source.content).byteLength) + ')'
+            : '未选择原作文件';
+          removeSourceButton.hidden = !source;
+        };
+        document.getElementById('select-add-source').addEventListener('click', () => sourceFileInput.click());
+        sourceFileInput.addEventListener('change', async () => {
+          const file = sourceFileInput.files[0];
+          sourceFileInput.value = '';
+          if (!file) return;
+          addRecordSourceFileReadPending = true;
+          addRecordSaveButton.disabled = true;
+          try {
+            if (!/\.(?:txt|md)$/i.test(file.name)) {
+              throw new Error('原作文件仅支持 TXT 或 Markdown 格式。');
+            }
+            if (file.size === 0 || file.size > 10 * 1024 * 1024) {
+              throw new Error('原作文件不能为空或超过 10 MiB。');
+            }
+            let content;
+            try {
+              content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+            } catch {
+              throw new Error('原作文件必须使用 UTF-8 编码。');
+            }
+            if (!content.trim()) throw new Error('原作文件内容不能为空。');
+            sourceValue.value = JSON.stringify({ name: file.name, content });
+            sourceStatus.textContent = '';
+            renderSourceFile();
+          } catch (error) {
+            sourceStatus.textContent = error instanceof Error ? error.message : String(error);
+          } finally {
+            addRecordSourceFileReadPending = false;
+            addRecordSaveButton.disabled = false;
+          }
+        });
+        removeSourceButton.addEventListener('click', () => {
+          sourceValue.value = '';
+          sourceStatus.textContent = '';
+          renderSourceFile();
+        });
+        renderSourceFile();
+      }
       addRecordDialog.showModal();
       addRecordFields.querySelector('input, select, textarea, button')?.focus();
     }
@@ -1748,6 +1826,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       addRecordMode = 'add';
       editingRecordId = undefined;
       addImageAttachments = [];
+      addRecordSourceFileReadPending = false;
       addRecordFields.replaceChildren();
       addRecordError.textContent = '';
       addRecordError.hidden = true;
@@ -1836,6 +1915,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
 
     function sendAddRecordValues() {
+      if (addRecordSourceFileReadPending) return;
       if (!addRecordCategoryId || !addRecordForm.reportValidity()) return;
       const formData = new FormData(addRecordForm);
       const projectId = formData.get('projectId');

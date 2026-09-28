@@ -42,6 +42,8 @@ export interface FormWorkflow {
   readonly showRunButton?: boolean;
   /** 参数表单是否接受用户附加图片。 */
   readonly supportsImageAttachments?: boolean;
+  /** 参数表单是否收集用于改编的原作文本文件。 */
+  readonly supportsOriginalSourceFile?: boolean;
   /** 是否以独立章节内容返回生成结果。 */
   readonly supportsChapterContent?: boolean;
 }
@@ -52,6 +54,8 @@ export type FormValues = Record<string, string>;
 
 /** 表单与工作流工具之间传递图片附件的隐藏字段名。 */
 export const IMAGE_ATTACHMENTS_FIELD = '__imageAttachments';
+/** 表单与工作流工具之间传递原作文件的隐藏字段名。 */
+export const ORIGINAL_SOURCE_FILE_FIELD = '__originalSourceFile';
 export const SCREENPLAY_WORKFLOW_NAME = 'ai-video-creation-tools_collect_screenplay_parameters';
 export const SHOOTING_SCRIPT_WORKFLOW_NAME = 'ai-video-creation-tools_collect_shooting_script_parameters';
 
@@ -207,7 +211,8 @@ export const formWorkflows: readonly FormWorkflow[] = [
     promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     resultType: 'content',
     supportsChapterContent: true,
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据原作和已填写内容继续。请在 Copilot 聊天中粘贴或附上原作。',
+    supportsOriginalSourceFile: true,
+    notice: '任务名称和原作文件为必填项；上传 UTF-8 编码的 TXT 或 Markdown 文件。其余空字段表示该项不需要收集，Copilot 将根据原作和已填写内容继续。',
     fields: [
       TASK_NAME_FIELD,
       { name: 'target', label: '章节形式', description: '选择正文按单章或分章交付；实际章节数受“章节数上限”控制', options: ['单章', '分章'] },

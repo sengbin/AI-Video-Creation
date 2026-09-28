@@ -7,7 +7,7 @@ import {
   MAX_GENERATED_CHAPTERS,
   MIN_CHAPTER_WORDS
 } from './chapterContent';
-import { collectFormValues, parseImageAttachments } from './formPanel';
+import { collectFormValues, parseImageAttachments, parseOriginalSourceFile } from './formPanel';
 import {
   FormValues,
   FormWorkflow,
@@ -15,6 +15,7 @@ import {
   getWorkflowResultType,
   isChapterContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
+  ORIGINAL_SOURCE_FILE_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
@@ -147,9 +148,13 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
       );
     const values = submission?.values;
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
+    const originalSourceFile = parseOriginalSourceFile(values?.[ORIGINAL_SOURCE_FILE_FIELD]);
+    if (submission?.runPrompt && this.workflow.supportsOriginalSourceFile && !originalSourceFile) {
+      throw new Error('请先上传原作 TXT 或 Markdown 文件，再运行小说重创作。');
+    }
     const parameters: Record<string, string | number> | undefined = values
       ? Object.fromEntries(Object.entries(values).filter(([name]) =>
-        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId' &&
+        name !== IMAGE_ATTACHMENTS_FIELD && name !== ORIGINAL_SOURCE_FILE_FIELD && name !== 'sourceTaskId' &&
         name !== 'screenplayTaskId' && name !== 'taskName'
       ))
       : undefined;
@@ -159,6 +164,10 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
           parameters[field.name] = Number(parameters[field.name]);
         }
       }
+    }
+    if (parameters && submission?.runPrompt && this.workflow.supportsOriginalSourceFile && originalSourceFile) {
+      parameters.sourceMaterial = originalSourceFile.content;
+      parameters.sourceFileName = originalSourceFile.name;
     }
     if (parameters && values && submission?.runPrompt && this.workflow.toolName === SCREENPLAY_WORKFLOW_NAME) {
       const sourceTask = listGeneratedContentTasks(this.database)

@@ -7,7 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from '../../database';
 import {
+  formatOriginalSourceFileSize,
   parseImageAttachments,
+  parseOriginalSourceFile,
   renderAddRecordFields,
   validateWorkflowFormValues
 } from '../../formPanel';
@@ -16,6 +18,8 @@ import {
   CREATIVE_WRITING_WORKFLOW_NAME,
   IMAGE_ATTACHMENTS_FIELD,
   IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+  NOVEL_RECREATION_WORKFLOW_NAME,
+  ORIGINAL_SOURCE_FILE_FIELD,
   SCREENPLAY_WORKFLOW_NAME,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from '../../formWorkflows';
@@ -503,6 +507,98 @@ suite('AI视频创作助手扩展', () => {
         [attachment]
       );
     } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('小说原作文件会保存、恢复并在任务表单中显示文件名', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-novel-source-'));
+    const storagePath = path.join(temporaryDirectory, 'globalStorage');
+    let database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+    const workflow = formWorkflows.find((item) => item.toolName === NOVEL_RECREATION_WORKFLOW_NAME);
+    assert.ok(workflow);
+    const sourceFile = { name: '原作.md', content: '# 原作\n主角收到一封来自未来的信。' };
+    const values = {
+      taskName: '小说改编',
+      [ORIGINAL_SOURCE_FILE_FIELD]: JSON.stringify(sourceFile)
+    };
+    const record = database.saveRecord({
+      taskName: '小说改编',
+      categoryId: workflow.toolName,
+      categoryName: workflow.title,
+      schema: workflow.fields,
+      data: values
+    });
+
+    try {
+      const html = renderAddRecordFields(workflow, [], values);
+      assert.ok(html.indexOf('name="taskName"') < html.indexOf(`name="${ORIGINAL_SOURCE_FILE_FIELD}"`));
+      assert.ok(html.includes(`原作.md (${formatOriginalSourceFileSize(Buffer.byteLength(sourceFile.content, 'utf8'))})`));
+      assert.strictEqual(formatOriginalSourceFileSize(512), '0.5 KB');
+      assert.strictEqual(formatOriginalSourceFileSize(1024 * 1024 - 1), '1024.0 KB');
+      assert.strictEqual(formatOriginalSourceFileSize(1024 * 1024), '1.00 MB');
+      assert.strictEqual(formatOriginalSourceFileSize(1024 * 1024 * 1.5), '1.50 MB');
+      assert.deepStrictEqual(parseOriginalSourceFile(values[ORIGINAL_SOURCE_FILE_FIELD]), sourceFile);
+      assert.throws(
+        () => parseOriginalSourceFile(JSON.stringify({ name: '原作.pdf', content: '正文' })),
+        /仅支持有效的 TXT 或 Markdown/
+      );
+
+      database.dispose();
+      database = await PromptDatabase.open(vscode.Uri.file(storagePath));
+      const restoredRecord = database.getRecord(record.id);
+      assert.ok(restoredRecord);
+      assert.deepStrictEqual(
+        parseOriginalSourceFile((restoredRecord.data as Record<string, string>)[ORIGINAL_SOURCE_FILE_FIELD]),
+        sourceFile
+      );
+    } finally {
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('小说原作正文与其他参数一并发送给 Copilot', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-novel-submission-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const workflow = formWorkflows.find((item) => item.toolName === NOVEL_RECREATION_WORKFLOW_NAME);
+    assert.ok(workflow);
+    const sourceFile = { name: '故事.txt', content: '这是用于改编的原作正文。' };
+    const values = {
+      taskName: '改编任务',
+      target: '单章',
+      chapterMinWords: '200',
+      chapterMaxWords: '2500',
+      maxChapters: '3',
+      preserve: '保留主角和结局',
+      adjustments: '',
+      additionalInfo: '保持悬疑氛围',
+      [ORIGINAL_SOURCE_FILE_FIELD]: JSON.stringify(sourceFile)
+    };
+    const submissions = new WorkflowSubmissionStore();
+    const tool = new WorkflowFormTool(workflow, database, submissions);
+    const cancellationSource = new vscode.CancellationTokenSource();
+
+    try {
+      submissions.set(workflow.toolName, values, 'novel-record');
+      const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
+      const textPart = result.content[0];
+      assert.ok(textPart instanceof vscode.LanguageModelTextPart);
+      const parameters = JSON.parse(textPart.value).parameters;
+      assert.strictEqual(parameters.sourceMaterial, sourceFile.content);
+      assert.strictEqual(parameters.sourceFileName, sourceFile.name);
+      assert.strictEqual(parameters.additionalInfo, '保持悬疑氛围');
+      assert.strictEqual(parameters.taskName, undefined);
+      assert.strictEqual(parameters[ORIGINAL_SOURCE_FILE_FIELD], undefined);
+
+      submissions.set(workflow.toolName, { ...values, [ORIGINAL_SOURCE_FILE_FIELD]: '' }, 'novel-record');
+      await assert.rejects(
+        tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token),
+        /请先上传原作 TXT 或 Markdown 文件/
+      );
+    } finally {
+      cancellationSource.dispose();
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
@@ -1153,7 +1249,7 @@ suite('AI视频创作助手扩展', () => {
         assert.ok(promptContent.includes('素材不足时宁可少写，不得重复情节、注水或补造设定来凑字数或章节'));
       }
       if (promptName === 'novel-adaptation.prompt.md') {
-        assert.ok(promptContent.includes('原作文本、章节、梗概或可读取的文件内容是改编必需材料'));
+        assert.ok(promptContent.includes('`sourceMaterial` 是改编必需材料'));
       }
       if (promptName === 'screenplay.prompt.md') {
         assert.ok(promptContent.includes('交付完整剧本包，但不扩展成逐镜头拍摄计划'));

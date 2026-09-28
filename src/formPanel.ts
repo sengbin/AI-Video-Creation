@@ -1,12 +1,19 @@
 import * as vscode from 'vscode';
 import { GeneratedContentTask, WorkProject } from './database';
-import { FormField, FormValues, FormWorkflow, IMAGE_ATTACHMENTS_FIELD } from './formWorkflows';
+import {
+  FormField,
+  FormValues,
+  FormWorkflow,
+  IMAGE_ATTACHMENTS_FIELD,
+  ORIGINAL_SOURCE_FILE_FIELD
+} from './formWorkflows';
 
 const CUSTOM_OPTION_VALUE = '__custom__';
 // 限制附件体积，避免表单消息和本地记录因图片过大而膨胀。
 const MAX_IMAGE_COUNT = 20;
 const MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_ORIGINAL_SOURCE_FILE_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg'] as const;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
@@ -14,6 +21,12 @@ const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/
 export interface FormImageAttachment {
   readonly mimeType: typeof IMAGE_MIME_TYPES[number];
   readonly data: string;
+}
+
+/** 表示用于小说改编的原作纯文本文件。 */
+export interface FormOriginalSourceFile {
+  readonly name: string;
+  readonly content: string;
 }
 
 /** 表示表单参数及用户选择的保存行为。 */
@@ -77,6 +90,50 @@ export function parseImageAttachments(value: string | undefined): FormImageAttac
 
     return { mimeType: attachment.mimeType as FormImageAttachment['mimeType'], data: attachment.data };
   });
+}
+
+/**
+ * 解析并校验上传的 UTF-8 TXT 或 Markdown 原作文件。
+ * @param value 原作文件的 JSON 字符串；未提供时表示尚未上传。
+ * @returns 文件名及正文；未提供时返回 undefined。
+ * @throws 文件名、正文编码或文件大小不符合要求时抛出错误。
+ */
+export function parseOriginalSourceFile(value: string | undefined): FormOriginalSourceFile | undefined {
+  if (value === undefined || value === '') {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('原作文件数据不是有效的 JSON。');
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 2 || !('name' in parsed) || typeof parsed.name !== 'string' ||
+      !('content' in parsed) || typeof parsed.content !== 'string') {
+    throw new Error('原作文件必须包含文件名和文本内容。');
+  }
+
+  const fileName = parsed.name;
+  const content = parsed.content;
+  if (!fileName.trim() || fileName.length > 255 || /[\\/\u0000-\u001f]/.test(fileName) ||
+      !/\.(?:txt|md)$/i.test(fileName)) {
+    throw new Error('原作文件仅支持有效的 TXT 或 Markdown 文件名。');
+  }
+  if (!content.trim() || Buffer.byteLength(content, 'utf8') > MAX_ORIGINAL_SOURCE_FILE_BYTES) {
+    throw new Error('原作文件内容不能为空或超过 10 MiB。');
+  }
+
+  return { name: fileName, content };
+}
+
+/** 按原作文件字节数格式化显示大小。 */
+export function formatOriginalSourceFileSize(sizeBytes: number): string {
+  return sizeBytes < 1024 * 1024
+    ? `${(sizeBytes / 1024).toFixed(1)} KB`
+    : `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 /**
@@ -184,6 +241,9 @@ export function validateWorkflowFormValues(value: unknown, workflow: FormWorkflo
   if (workflow.supportsImageAttachments) {
     expectedNames.push(IMAGE_ATTACHMENTS_FIELD);
   }
+  if (workflow.supportsOriginalSourceFile) {
+    expectedNames.push(ORIGINAL_SOURCE_FILE_FIELD);
+  }
   const invalidNumberField = workflow.fields.some((field) => {
     if (field.inputType !== 'number') {
       return false;
@@ -219,6 +279,14 @@ export function validateWorkflowFormValues(value: unknown, workflow: FormWorkflo
     }
   }
 
+  if (workflow.supportsOriginalSourceFile) {
+    try {
+      parseOriginalSourceFile(value[ORIGINAL_SOURCE_FILE_FIELD] as string);
+    } catch {
+      return undefined;
+    }
+  }
+
   return Object.fromEntries(expectedNames.map((name) => [name, value[name] as string]));
 }
 
@@ -245,11 +313,33 @@ function createFormHtml(
         <p class="image-status" id="image-status" role="status" aria-live="polite"></p>
       </section>`
     : '';
+  const originalSourceFile = workflow.supportsOriginalSourceFile
+    ? parseOriginalSourceFile(initialValues[ORIGINAL_SOURCE_FILE_FIELD])
+    : undefined;
+  const originalSourceLabel = originalSourceFile
+    ? `${originalSourceFile.name} (${formatOriginalSourceFileSize(Buffer.byteLength(originalSourceFile.content, 'utf8'))})`
+    : '未选择原作文件';
+  const originalSourceField = workflow.supportsOriginalSourceFile
+    ? `<section class="original-source-area" id="original-source-area" aria-label="原作文件">
+        <div class="original-source-heading">
+          <label for="original-source-file-input">原作文件（TXT/MD）</label>
+          <span>上传 UTF-8 编码文件，单个文件不超过 10 MiB</span>
+        </div>
+        <input class="original-source-file-input" id="original-source-file-input" type="file" accept=".txt,.md,text/plain,text/markdown">
+        <input id="original-source-value" name="${ORIGINAL_SOURCE_FILE_FIELD}" type="hidden" value="${escapeHtml(originalSourceFile ? JSON.stringify(originalSourceFile) : '')}">
+        <div class="original-source-controls">
+          <button class="original-source-select" id="select-original-source" type="button">选择文件</button>
+          <span id="original-source-name" role="status" aria-live="polite">${escapeHtml(originalSourceLabel)}</span>
+          <button class="original-source-remove" id="remove-original-source" type="button"${originalSourceFile ? '' : ' hidden'}>移除</button>
+        </div>
+        <p class="original-source-status" id="original-source-status" role="status" aria-live="polite"></p>
+      </section>`
+    : '';
   const defaultProjectId = workflow.requiresProject ? projects[0]?.id ?? '' : '0';
   const selectedProjectId = initialValues.projectId ?? defaultProjectId;
   const renderWorkflowField = (field: FormField): string => {
     const renderedField = renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId);
-    return field.name === 'taskName' ? renderedField + imageAttachmentField : renderedField;
+    return field.name === 'taskName' ? renderedField + imageAttachmentField + originalSourceField : renderedField;
   };
   const projectContentTaskField = workflow.fields
     .filter((field) => field.projectContentTask)
@@ -258,8 +348,9 @@ function createFormHtml(
   const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
     renderWorkflowField(field)
   ).join('');
-  const trailingImageAttachmentField = workflow.supportsImageAttachments &&
-    !workflow.fields.some((field) => field.name === 'taskName') ? imageAttachmentField : '';
+  const trailingAttachmentFields = !workflow.fields.some((field) => field.name === 'taskName')
+    ? imageAttachmentField + originalSourceField
+    : '';
   const projectField = renderWorkProjectField(projects, initialValues.projectId ?? defaultProjectId, workflow.requiresProject === true);
   const runButton = workflow.showRunButton === false
     ? ''
@@ -310,6 +401,21 @@ function createFormHtml(
     .image-file-input { display: none; }
     .image-status { min-height: 0; margin: 6px 0 0; color: var(--vscode-errorForeground); font-size: 12px; }
     .image-status:empty { display: none; }
+    .original-source-area { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 4px; }
+    .original-source-heading { display: grid; gap: 6px; }
+    .original-source-heading label { font-size: 12px; font-weight: 600; }
+    .original-source-heading span, #original-source-name { color: var(--vscode-descriptionForeground); font-size: 12px; overflow-wrap: anywhere; }
+    .original-source-file-input { display: none; }
+    .original-source-controls { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .original-source-select, .original-source-remove { min-height: 22px; padding: 0 8px; border: 0; border-radius: 3px; font: inherit; font-size: 12px; cursor: pointer; }
+    .original-source-select { color: var(--vscode-button-secondaryForeground); background: rgba(90,90,90,0.14); }
+    .original-source-select:hover { background: rgba(90,90,90,0.20); }
+    .original-source-remove { color: var(--vscode-errorForeground); background: transparent; }
+    .original-source-remove:hover { background: var(--vscode-toolbar-hoverBackground); }
+    body.vscode-dark .original-source-select { background: rgba(255,255,255,0.08); }
+    body.vscode-dark .original-source-select:hover { background: rgba(255,255,255,0.12); }
+    .original-source-status { min-height: 0; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
+    .original-source-status:empty { display: none; }
     .field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
     .field[hidden] { display: none; }
     .field-heading { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
@@ -411,7 +517,7 @@ function createFormHtml(
       ${projectField}
       ${projectContentTaskField}
       ${fields}
-      ${trailingImageAttachmentField}
+      ${trailingAttachmentFields}
       <div id="status" role="status" aria-live="polite"></div>
       <div class="actions">
         <div class="secondary-actions">
@@ -644,6 +750,59 @@ function createFormHtml(
       renderImageAttachments();
     }
 
+    const originalSourceArea = document.getElementById('original-source-area');
+    if (originalSourceArea) {
+      const fileInput = document.getElementById('original-source-file-input');
+      const sourceValue = document.getElementById('original-source-value');
+      const sourceName = document.getElementById('original-source-name');
+      const sourceStatus = document.getElementById('original-source-status');
+      const removeButton = document.getElementById('remove-original-source');
+      function formatOriginalSourceSize(sizeBytes) {
+        return sizeBytes < 1024 * 1024
+          ? (sizeBytes / 1024).toFixed(1) + ' KB'
+          : (sizeBytes / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+      const renderOriginalSource = () => {
+        const source = sourceValue.value ? JSON.parse(sourceValue.value) : undefined;
+        sourceName.textContent = source
+          ? source.name + ' (' + formatOriginalSourceSize(new TextEncoder().encode(source.content).byteLength) + ')'
+          : '未选择原作文件';
+        removeButton.hidden = !source;
+      };
+      document.getElementById('select-original-source').addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
+        try {
+          if (!/\.(?:txt|md)$/i.test(file.name)) {
+            throw new Error('原作文件仅支持 TXT 或 Markdown 格式。');
+          }
+          if (file.size === 0 || file.size > ${MAX_ORIGINAL_SOURCE_FILE_BYTES}) {
+            throw new Error('原作文件不能为空或超过 10 MiB。');
+          }
+          let content;
+          try {
+            content = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+          } catch {
+            throw new Error('原作文件必须使用 UTF-8 编码。');
+          }
+          if (!content.trim()) throw new Error('原作文件内容不能为空。');
+          sourceValue.value = JSON.stringify({ name: file.name, content });
+          sourceStatus.textContent = '';
+          renderOriginalSource();
+        } catch (error) {
+          sourceStatus.textContent = error instanceof Error ? error.message : String(error);
+        }
+      });
+      removeButton.addEventListener('click', () => {
+        sourceValue.value = '';
+        sourceStatus.textContent = '';
+        renderOriginalSource();
+      });
+      renderOriginalSource();
+    }
+
     // 表单文本框随内容增高，避免手动拖动尺寸。
     document.querySelectorAll('textarea').forEach((textarea) => {
       const resizeTextarea = () => {
@@ -662,6 +821,11 @@ function createFormHtml(
         return;
       }
       if (!form.reportValidity()) {
+        return;
+      }
+      if (runPrompt && ${workflow.supportsOriginalSourceFile === true} &&
+          !document.getElementById('original-source-value').value) {
+        status.textContent = '请先上传原作 TXT 或 Markdown 文件。';
         return;
       }
       const formData = new FormData(form);
@@ -859,9 +1023,31 @@ export function renderAddRecordFields(
         <p id="add-image-status" role="status" aria-live="polite"></p>
       </section>`
     : '';
+  const originalSourceFile = workflow.supportsOriginalSourceFile
+    ? parseOriginalSourceFile(initialValues[ORIGINAL_SOURCE_FILE_FIELD])
+    : undefined;
+  const originalSourceLabel = originalSourceFile
+    ? `${originalSourceFile.name} (${formatOriginalSourceFileSize(Buffer.byteLength(originalSourceFile.content, 'utf8'))})`
+    : '未选择原作文件';
+  const originalSourceField = workflow.supportsOriginalSourceFile
+    ? `<section class="add-source-area" aria-label="原作文件">
+        <div class="source-heading">
+          <label for="add-source-file-input">原作文件（TXT/MD）</label>
+          <span>上传 UTF-8 编码文件，单个文件不超过 10 MiB</span>
+        </div>
+        <input id="add-source-file-input" type="file" accept=".txt,.md,text/plain,text/markdown">
+        <input id="add-source-value" name="${ORIGINAL_SOURCE_FILE_FIELD}" type="hidden" value="${escapeHtml(originalSourceFile ? JSON.stringify(originalSourceFile) : '')}">
+        <div class="source-controls">
+          <button id="select-add-source" class="source-select" type="button">选择文件</button>
+          <span id="add-source-name" class="add-source-name" role="status" aria-live="polite">${escapeHtml(originalSourceLabel)}</span>
+          <button id="remove-add-source" class="source-remove" type="button"${originalSourceFile ? '' : ' hidden'}>移除</button>
+        </div>
+        <p id="add-source-status" class="source-status" role="status" aria-live="polite"></p>
+      </section>`
+    : '';
   function renderAddRecordField(field: FormField): string {
     const renderedField = renderField(field, initialValues[field.name] ?? field.defaultValue ?? '', generatedContentTasks, selectedProjectId);
-    return field.name === 'taskName' ? renderedField + imageField : renderedField;
+    return field.name === 'taskName' ? renderedField + imageField + originalSourceField : renderedField;
   }
   const projectContentTaskFields = workflow.fields.filter((field) => field.projectContentTask).map((field) =>
     renderAddRecordField(field)
@@ -869,7 +1055,8 @@ export function renderAddRecordFields(
   const fields = workflow.fields.filter((field) => !field.projectContentTask).map((field) =>
     renderAddRecordField(field)
   ).join('');
-  const trailingImageField = workflow.supportsImageAttachments &&
-    !workflow.fields.some((field) => field.name === 'taskName') ? imageField : '';
-  return `${projectField}${projectContentTaskFields}${fields}${trailingImageField}`;
+  const trailingAttachmentFields = !workflow.fields.some((field) => field.name === 'taskName')
+    ? imageField + originalSourceField
+    : '';
+  return `${projectField}${projectContentTaskFields}${fields}${trailingAttachmentFields}`;
 }

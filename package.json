@@ -144,7 +144,7 @@
       {
         "name": "ai-video-creation-tools_collect_novel_parameters",
         "displayName": "收集小说改编参数",
-        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集任务名称、改编目标、每章字数范围、章节数上限、保留或调整要求和输出要求，提交后结合用户提供的原作按章创作改编内容。原作由用户作为聊天内容或文件附件提供，不由此工具收集。任务名称及章节字数和数量约束必填。",
+        "modelDescription": "在小说重创作 Prompt 中调用。打开同屏表单收集 UTF-8 编码的 TXT 或 Markdown 原作文件、任务名称、改编目标、每章字数范围、章节数上限、保留或调整要求和输出要求；提交后原作正文与其他参数一并返回，供模型按章创作改编内容。运行生成时原作文件必填。",
         "userDescription": "打开小说改编参数表单",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "video_creation_novel_parameters",
