@@ -393,8 +393,8 @@ function getConfiguredChapterWordRange(value: unknown): { min: number; max: numb
       ? Number(value.chapterMaxWords)
       : Number.NaN;
   if (!Number.isSafeInteger(min) || min < MIN_CHAPTER_WORDS || min > MAX_CHAPTER_WORDS ||
-      !Number.isSafeInteger(max) || max < MIN_CHAPTER_WORDS || max > MAX_CHAPTER_WORDS || min >= max) {
-    throw new Error(`每章字数范围必须在 ${MIN_CHAPTER_WORDS} 到 ${MAX_CHAPTER_WORDS} 之间，且上限大于下限。`);
+      !Number.isSafeInteger(max) || max < MIN_CHAPTER_WORDS || max > MAX_CHAPTER_WORDS || min > max) {
+    throw new Error(`每章字数范围必须在 ${MIN_CHAPTER_WORDS} 到 ${MAX_CHAPTER_WORDS} 之间，且上限不得小于下限。`);
   }
   return { min, max };
 }

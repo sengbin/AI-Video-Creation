@@ -299,6 +299,10 @@ suite('AI视频创作助手扩展', () => {
             field.name === 'maxChapters' ? '20' : field.required ? '1' : ''
     ]));
     assert.deepStrictEqual(validateWorkflowFormValues(values, workflow), values);
+    assert.deepStrictEqual(
+      validateWorkflowFormValues({ ...values, chapterMinWords: '200', chapterMaxWords: '200' }, workflow),
+      { ...values, chapterMinWords: '200', chapterMaxWords: '200' }
+    );
     assert.strictEqual(
       validateWorkflowFormValues({ ...values, chapterMinWords: '2500', chapterMaxWords: '1500' }, workflow),
       undefined
@@ -774,7 +778,7 @@ suite('AI视频创作助手扩展', () => {
       categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
       categoryName: '图片灵感写作',
       schema: [],
-      data: { taskName: '待生成作品', chapterMinWords: '500', chapterMaxWords: '2500', maxChapters: '2' }
+      data: { taskName: '待生成作品', chapterMinWords: '500', chapterMaxWords: '500', maxChapters: '2' }
     });
     const tool = new GeneratedResultTool(database);
     const cancellationSource = new vscode.CancellationTokenSource();
@@ -817,7 +821,7 @@ suite('AI视频创作助手扩展', () => {
           },
           toolInvocationToken: undefined
         }, cancellationSource.token),
-        /第 1 章正文统计为 499 字，必须在 500 到 2500 字之间/
+        /第 1 章正文统计为 499 字，必须在 500 到 500 字之间/
       );
       const result = await tool.invoke({
         input: { recordId: record.id, chapters: generatedChapters },

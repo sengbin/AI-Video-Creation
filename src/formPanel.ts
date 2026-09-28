@@ -258,7 +258,7 @@ export function validateWorkflowFormValues(value: unknown, workflow: FormWorkflo
       (field.max !== undefined && numericValue > field.max);
   });
   const invalidChapterWordRange = workflow.supportsChapterContent === true &&
-    Number(value.chapterMinWords) >= Number(value.chapterMaxWords);
+    Number(value.chapterMinWords) > Number(value.chapterMaxWords);
   const actualNames = Object.keys(value);
   if (actualNames.length !== expectedNames.length ||
       expectedNames.some((name) => typeof value[name] !== 'string') ||
