@@ -654,7 +654,8 @@ function createCategoryHtml(): string {
       --card-shadow: none;
       --menu-hover-background: #323232;
       --add-hover-background: #3D3D3D;
-      --pressed-background: #252525;
+      --menu-pressed-background: #2F2F2F;
+      --add-pressed-background: #383838;
     }
     body.vscode-light {
       --card-background: color-mix(in srgb, var(--bg) 62%, #E2E2E2);
@@ -663,7 +664,8 @@ function createCategoryHtml(): string {
       --card-shadow: 0 1px 2px rgba(0,0,0,0.07);
       --menu-hover-background: #E6E6E6;
       --add-hover-background: #DCDCDC;
-      --pressed-background: #D0D0D0;
+      --menu-pressed-background: #DEDEDE;
+      --add-pressed-background: #D4D4D4;
     }
     body.vscode-dark {
       --card-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
@@ -699,12 +701,12 @@ function createCategoryHtml(): string {
     }
     .category-item + .category-item { margin-top: 4px; }
     .category-item:hover { background: var(--menu-hover-background); }
-    .category-item.is-pressed { background: var(--pressed-background); }
+    .category-item.is-pressed { background: var(--menu-pressed-background); }
     button { min-width: 0; min-height: 32px; border: 0; border-radius: 3px; color: inherit; font: inherit; cursor: pointer; }
     .select { display: block; width: 100%; max-width: 100%; padding: 4px 6px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
     .add { padding: 3px 5px; color: var(--vscode-textLink-foreground); background: transparent; }
     .add:hover { background: var(--add-hover-background); }
-    .add.is-pressed { background: var(--pressed-background); }
+    .add.is-pressed { background: var(--add-pressed-background); }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   </style>
 </head>
@@ -731,6 +733,31 @@ function createCategoryHtml(): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const categoryList = document.getElementById('category-list');
+    function bindPressedState(button, item, pressRow) {
+      const clearPressed = () => {
+        if (pressRow) item.classList.remove('is-pressed');
+        button.classList.remove('is-pressed');
+      };
+      button.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (pressRow) item.classList.add('is-pressed');
+        button.classList.add('is-pressed');
+        button.setPointerCapture(event.pointerId);
+      });
+      button.addEventListener('pointerup', clearPressed);
+      button.addEventListener('pointercancel', clearPressed);
+      button.addEventListener('lostpointercapture', clearPressed);
+    }
+    const settingsItem = document.querySelector('.config-card .category-item');
+    const openCollectionsButton = document.getElementById('open-collections');
+    const createCollectionButton = document.getElementById('create-collection');
+    if (!(settingsItem instanceof HTMLElement) ||
+        !(openCollectionsButton instanceof HTMLButtonElement) ||
+        !(createCollectionButton instanceof HTMLButtonElement)) {
+      throw new Error('设置菜单项缺失。');
+    }
+    bindPressedState(openCollectionsButton, settingsItem, true);
+    bindPressedState(createCollectionButton, settingsItem, false);
     document.getElementById('open-collections').addEventListener('click', () => {
       vscode.postMessage({ command: 'open-collections' });
     });
@@ -796,26 +823,11 @@ function createCategoryHtml(): string {
           const select = makeButton(category.title, 'select', category.title, () => {
             vscode.postMessage({ command: 'select-category', categoryId: category.id });
           });
-          const bindPressedState = (button, pressRow) => {
-            const clearPressed = () => {
-              if (pressRow) item.classList.remove('is-pressed');
-              button.classList.remove('is-pressed');
-            };
-            button.addEventListener('pointerdown', (event) => {
-              if (event.button !== 0) return;
-              if (pressRow) item.classList.add('is-pressed');
-              button.classList.add('is-pressed');
-              button.setPointerCapture(event.pointerId);
-            });
-            button.addEventListener('pointerup', clearPressed);
-            button.addEventListener('pointercancel', clearPressed);
-            button.addEventListener('lostpointercapture', clearPressed);
-          };
-          bindPressedState(select, true);
+          bindPressedState(select, item, true);
           const add = makeButton('添加', 'add', '添加' + category.title + '记录', () => {
             vscode.postMessage({ command: 'add-record', categoryId: category.id });
           });
-          bindPressedState(add, false);
+          bindPressedState(add, item, false);
           item.append(select, add);
           section.append(item);
         }
