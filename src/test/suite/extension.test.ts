@@ -623,7 +623,8 @@ suite('AI视频创作助手扩展', () => {
       const result = await tool.invoke({ input: {}, toolInvocationToken: undefined }, cancellationSource.token);
       const response = result.content[0];
       assert.ok(response instanceof vscode.LanguageModelTextPart);
-      assert.deepStrictEqual(JSON.parse(response.value).parameters, values);
+      assert.deepStrictEqual(JSON.parse(response.value).parameters, { idea: '灯塔收到未来的信号' });
+      assert.strictEqual(values.taskName, '已选记录');
       assert.strictEqual(JSON.parse(response.value).recordId, 'saved-record-id');
       assert.deepStrictEqual(database.listRecords(workflow.toolName), []);
       assert.strictEqual(submissions.take(workflow.toolName), undefined);
@@ -650,6 +651,7 @@ suite('AI视频创作助手扩展', () => {
       { chapterNumber: 1, title: '第一集', content: '第一集完整正文' },
       { chapterNumber: 2, title: '第二集', content: '第二集完整正文' }
     ]);
+    database.updateGeneratedContent(sourceRecord.id, '不应混入的整段正文');
     const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.ok(!workflow.fields.some((field) => field.name === 'sourceMaterial'));
@@ -670,9 +672,11 @@ suite('AI视频创作助手扩展', () => {
       const textPart = result.content[0];
       assert.ok(textPart instanceof vscode.LanguageModelTextPart);
       const parameters = JSON.parse(textPart.value).parameters;
-      assert.ok(parameters.sourceMaterial.includes('第一集完整正文'));
-      assert.ok(parameters.sourceMaterial.includes('第二集完整正文'));
-      assert.ok(!parameters.sourceMaterial.includes('不应使用的旧手填素材'));
+      assert.deepStrictEqual(JSON.parse(parameters.sourceMaterial), [
+        { chapterNumber: 1, title: '第一集', content: '第一集完整正文' },
+        { chapterNumber: 2, title: '第二集', content: '第二集完整正文' }
+      ]);
+      assert.strictEqual(parameters.taskName, undefined);
       assert.strictEqual(parameters.sourceTaskId, undefined);
       assert.strictEqual(parameters.maxEpisodeDurationSeconds, 60);
       assert.strictEqual(parameters.maxEpisodes, 2);
@@ -708,7 +712,7 @@ suite('AI视频创作助手扩展', () => {
       const textPart = result.content[0];
       const imagePart = result.content[1];
       assert.ok(textPart instanceof vscode.LanguageModelTextPart);
-      assert.deepStrictEqual(JSON.parse(textPart.value).parameters, { taskName: '图片参考' });
+      assert.deepStrictEqual(JSON.parse(textPart.value).parameters, {});
       assert.ok(imagePart instanceof vscode.LanguageModelDataPart);
       assert.strictEqual(imagePart.mimeType, 'image/png');
       assert.deepStrictEqual(Buffer.from(imagePart.data), imageBytes);
@@ -820,10 +824,13 @@ suite('AI视频创作助手扩展', () => {
         }, cancellationSource.token),
         /第 1 章正文统计为 499 字，必须在 500 到 2500 字之间/
       );
-      await tool.invoke({
+      const result = await tool.invoke({
         input: { recordId: record.id, chapters: generatedChapters },
         toolInvocationToken: undefined
       }, cancellationSource.token);
+      const textPart = result.content[0];
+      assert.ok(textPart instanceof vscode.LanguageModelTextPart);
+      assert.deepStrictEqual(JSON.parse(textPart.value), { status: 'saved', recordId: record.id });
       const savedRecord = database.getRecord(record.id);
       assert.strictEqual(savedRecord?.generatedResultContent, undefined);
       assert.strictEqual(savedRecord?.generatedResultChinese, undefined);

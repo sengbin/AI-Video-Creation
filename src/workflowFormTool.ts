@@ -149,7 +149,7 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     const imageAttachments = parseImageAttachments(values?.[IMAGE_ATTACHMENTS_FIELD]);
     const parameters: Record<string, string | number> | undefined = values
       ? Object.fromEntries(Object.entries(values).filter(([name]) =>
-        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId'
+        name !== IMAGE_ATTACHMENTS_FIELD && name !== 'sourceTaskId' && name !== 'taskName'
       ))
       : undefined;
     if (parameters) {
@@ -170,13 +170,14 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
         throw new Error('关联创作任务已不存在。');
       }
       const chapters = this.database.listGeneratedChapterContents(sourceTask.id);
-      const generatedContent = sourceRecord.generatedResultContent?.trim() || chapters
-        .map((chapter) => `第${chapter.chapterNumber}集：${chapter.title}\n${chapter.content}`)
-        .join('\n\n');
-      if (!generatedContent.trim()) {
-        throw new Error('关联创作任务没有可用的生成内容。');
+      if (chapters.length === 0) {
+        throw new Error('关联创作任务没有可用的章节内容。');
       }
-      parameters.sourceMaterial = `以下为项目“${this.database.listWorkProjects().find((project) => project.id === submission.projectId)?.name ?? ''}”中关联任务“${sourceTask.taskName}”生成的完整内容：\n${generatedContent}`;
+      parameters.sourceMaterial = JSON.stringify(chapters.map(({ chapterNumber, title, content }) => ({
+        chapterNumber,
+        title,
+        content
+      })), null, 2);
     }
     let recordId = submitted?.recordId;
     if (values && !submitted) {
@@ -323,8 +324,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
     return new vscode.LanguageModelToolResult([
       new vscode.LanguageModelTextPart(JSON.stringify({
         status: 'saved',
-        recordId: record.id,
-        taskName: record.taskName
+        recordId: record.id
       }))
     ]);
   }
