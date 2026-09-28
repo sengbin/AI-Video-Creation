@@ -1298,7 +1298,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">项目名称</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="chapter-content-action-column">操作</span><span class="row-action-column">操作</span></div>
+          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">所属项目</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="chapter-content-action-column">操作</span><span class="row-action-column">操作</span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
         <div id="empty-state" class="empty" role="status" hidden>暂无保存的数据</div>

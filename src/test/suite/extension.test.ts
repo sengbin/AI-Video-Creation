@@ -1202,7 +1202,7 @@ suite('AI视频创作助手扩展', () => {
     assert.strictEqual(agentMetadata.name, 'AI 视频创作');
     assert.ok(agentMetadata.description);
     assert.ok(agentContent.includes('按用户指定的目标产物和当前制作阶段执行对应 Prompt'));
-    assert.ok(agentContent.includes('区分素材事实与创作建议'));
+    assert.ok(agentContent.includes('按其交付要求呈现'));
     assert.ok(agentContent.includes('工具返回 `status: cancelled` 时停止本次任务'));
     assert.ok(agentContent.includes('返回 `status: submitted` 时从 `parameters` 读取已提交内容继续'));
     assert.ok(agentContent.includes('直接分析图片参数工具结果中的图片，不要求用户将同一图片另行附加到 Copilot 聊天'));
@@ -1264,6 +1264,10 @@ suite('AI视频创作助手扩展', () => {
         assert.ok(promptContent.includes('### 五、关键道具与特效'));
         assert.ok(promptContent.includes('### 七、剧本正文'));
         assert.ok(promptContent.includes('### 八、连续性备注'));
+        assert.ok(promptContent.includes('直接作为剧本采用设定写入设定表和正文'));
+        assert.ok(promptContent.includes('不添加解释性前缀或标签'));
+        assert.ok(!promptContent.includes('建议'));
+        assert.ok(promptContent.includes('不询问是否采用'));
         assert.ok(promptContent.includes('输出前检查'));
       }
       if (promptName === 'shooting-script.prompt.md') {
@@ -1285,6 +1289,8 @@ suite('AI视频创作助手扩展', () => {
     assert.strictEqual(saveResultContribution.inputSchema.oneOf.length, 3);
     const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'promptRecordsView.ts'), 'utf8');
     const recordsPageSource = recordsViewSource.slice(recordsViewSource.indexOf('function createPageHtml('));
+    assert.ok(recordsPageSource.includes('<span class="project-column">所属项目</span>'));
+    assert.ok(recordsPageSource.includes('<div class="table-header" role="row"><span>项目名称</span><span>项目简介</span><span>创建时间</span><span>操作</span></div>'));
     assert.ok(recordsPageSource.includes("default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';"));
     assert.ok(recordsViewSource.includes("function getResultActionLabel(workflowId)"));
     assert.ok(recordsViewSource.includes("if (screenplayWorkflowIds.includes(workflowId)) return '查看剧本';"));
