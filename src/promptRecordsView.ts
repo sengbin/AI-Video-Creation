@@ -649,21 +649,24 @@ function createCategoryHtml(): string {
       color-scheme: light dark;
       --bg: var(--vscode-sideBar-background, #FFFFFF);
       --card-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
-      --card-border: color-mix(in srgb, #FFFFFF 7%, var(--bg));
       --config-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
       --divider: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
       --card-shadow: none;
+      --menu-hover-background: #323232;
+      --add-hover-background: #3D3D3D;
+      --pressed-background: #252525;
     }
     body.vscode-light {
       --card-background: color-mix(in srgb, var(--bg) 62%, #E2E2E2);
-      --card-border: color-mix(in srgb, #000000 22%, #FFFFFF);
       --config-background: color-mix(in srgb, var(--bg) 62%, #E2E2E2);
       --divider: color-mix(in srgb, #000000 8%, transparent);
       --card-shadow: 0 1px 2px rgba(0,0,0,0.07);
+      --menu-hover-background: #E6E6E6;
+      --add-hover-background: #DCDCDC;
+      --pressed-background: #D0D0D0;
     }
     body.vscode-dark {
       --card-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
-      --card-border: color-mix(in srgb, #FFFFFF 7%, var(--bg));
       --config-background: color-mix(in srgb, var(--bg) 97%, #FFFFFF);
       --divider: color-mix(in srgb, #FFFFFF 8%, transparent);
     }
@@ -673,7 +676,7 @@ function createCategoryHtml(): string {
     .card { width: 100%; min-width: 0; }
     .card-inner {
       min-width: 0; padding: 8px; background: var(--card-background);
-      border: 1px solid var(--card-border); border-radius: 6px; box-shadow: var(--card-shadow);
+      border: 0; border-radius: 6px; box-shadow: var(--card-shadow);
     }
     .config-card { background: var(--config-background); border: 0; box-shadow: none; }
     h2 {
@@ -685,23 +688,24 @@ function createCategoryHtml(): string {
       background: var(--vscode-focusBorder); border-radius: 2px; content: "";
     }
     nav { display: grid; gap: 0; }
-    .category-stage + .category-stage { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--divider); }
+    .category-stage + .category-stage { margin-top: 10px; }
     .stage-title {
-      margin: 0 2px 4px; padding-left: 7px; border-left: 2px solid var(--vscode-focusBorder);
+      margin: 0 0 4px; padding: 0 0 6px 11px; border-bottom: 1px solid var(--divider);
       color: var(--vscode-descriptionForeground); font-size: 12px; font-weight: 600;
     }
     .category-item {
-      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; padding: 4px 2px;
-      background: transparent; border: 0; border-bottom: 1px solid var(--divider);
+      position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0 0 0 2px;
+      background: transparent; border: 0; border-radius: 4px;
     }
-    .category-item:last-child { border-bottom-color: transparent; }
-    .category-item:hover { background: var(--vscode-list-hoverBackground); }
+    .category-item + .category-item { margin-top: 4px; }
+    .category-item:hover { background: var(--menu-hover-background); }
+    .category-item.is-pressed { background: var(--pressed-background); }
     button { min-width: 0; min-height: 32px; border: 0; border-radius: 3px; color: inherit; font: inherit; cursor: pointer; }
-    .select { padding: 5px 8px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
-    .add { padding: 4px 6px; color: var(--vscode-textLink-foreground); background: transparent; }
+    .select { display: block; width: 100%; max-width: 100%; padding: 4px 6px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
+    .add { padding: 3px 5px; color: var(--vscode-textLink-foreground); background: transparent; }
+    .add:hover { background: var(--add-hover-background); }
+    .add.is-pressed { background: var(--pressed-background); }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-    .category-item:focus-within { border-bottom-color: var(--vscode-focusBorder); }
-    .category-item button:focus-visible { outline: none; }
   </style>
 </head>
 <body>
@@ -792,9 +796,26 @@ function createCategoryHtml(): string {
           const select = makeButton(category.title, 'select', category.title, () => {
             vscode.postMessage({ command: 'select-category', categoryId: category.id });
           });
-          const add = makeButton('+ 添加', 'add', '添加' + category.title + '记录', () => {
+          const bindPressedState = (button, pressRow) => {
+            const clearPressed = () => {
+              if (pressRow) item.classList.remove('is-pressed');
+              button.classList.remove('is-pressed');
+            };
+            button.addEventListener('pointerdown', (event) => {
+              if (event.button !== 0) return;
+              if (pressRow) item.classList.add('is-pressed');
+              button.classList.add('is-pressed');
+              button.setPointerCapture(event.pointerId);
+            });
+            button.addEventListener('pointerup', clearPressed);
+            button.addEventListener('pointercancel', clearPressed);
+            button.addEventListener('lostpointercapture', clearPressed);
+          };
+          bindPressedState(select, true);
+          const add = makeButton('添加', 'add', '添加' + category.title + '记录', () => {
             vscode.postMessage({ command: 'add-record', categoryId: category.id });
           });
+          bindPressedState(add, false);
           item.append(select, add);
           section.append(item);
         }
