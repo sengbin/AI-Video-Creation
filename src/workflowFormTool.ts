@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
+import { GeneratedEpisodeContent, MAX_GENERATED_EPISODES } from './episodeContent';
 import { collectFormValues, parseImageAttachments } from './formPanel';
 import {
   FormValues,
   FormWorkflow,
   getWorkflowResultType,
+  isEpisodeContentWorkflow,
   IMAGE_ATTACHMENTS_FIELD,
   SHOOTING_SCRIPT_WORKFLOW_NAME
 } from './formWorkflows';
@@ -29,6 +31,8 @@ export interface SaveGeneratedResultInput {
   readonly recordId: string;
   /** 作品类工作流返回的完整创作内容。 */
   readonly content?: string;
+  /** 按集拆分的创作内容。 */
+  readonly episodes?: readonly GeneratedEpisodeContent[];
   /** 提示词类工作流返回的完整中文提示词。 */
   readonly contentZh?: string;
   /** 提示词类工作流返回的完整英文提示词。 */
@@ -137,6 +141,13 @@ export class WorkflowFormTool implements vscode.LanguageModelTool<EmptyToolInput
     const parameters: Record<string, string | number> | undefined = values
       ? Object.fromEntries(Object.entries(values).filter(([name]) => name !== IMAGE_ATTACHMENTS_FIELD))
       : undefined;
+    if (parameters) {
+      for (const field of this.workflow.fields) {
+        if (field.inputType === 'number' && typeof parameters[field.name] === 'string') {
+          parameters[field.name] = Number(parameters[field.name]);
+        }
+      }
+    }
     if (parameters && submission?.episodeNumber !== undefined) {
       parameters.episodeNumber = submission.episodeNumber;
     }
@@ -211,7 +222,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
     options: vscode.LanguageModelToolInvocationOptions<SaveGeneratedResultInput>,
     _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelToolResult> {
-    const { recordId, content, contentZh, contentEn } = options.input;
+    const { recordId, content, episodes, contentZh, contentEn } = options.input;
     if (typeof recordId !== 'string' || recordId.length === 0) {
       throw new Error('生成结果保存所需的记录标识缺失。');
     }
@@ -223,7 +234,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
 
     let record: ReturnType<PromptDatabase['getRecord']>;
     if (existingRecord.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME) {
-      if (content !== undefined) {
+      if (content !== undefined || episodes !== undefined) {
         throw new Error('拍摄脚本必须提交中英文内容，不接受单篇创作内容。');
       }
       if (typeof contentZh !== 'string' || contentZh.trim().length === 0) {
@@ -233,11 +244,24 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
         throw new Error('拍摄脚本英文内容不能为空。');
       }
       record = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
+    } else if (isEpisodeContentWorkflow(existingRecord.categoryId)) {
+      if (content !== undefined || contentZh !== undefined || contentEn !== undefined ||
+          !isGeneratedEpisodeContentArray(episodes)) {
+        throw new Error('该工作流必须提交按集拆分的内容。');
+      }
+      const maxEpisodes = getConfiguredMaxEpisodes(existingRecord.data);
+      if (episodes.length > maxEpisodes) {
+        throw new Error(`返回集数不能超过表单设定的 ${maxEpisodes} 集。`);
+      }
+      if (!this.database.saveGeneratedEpisodeContents(recordId, episodes)) {
+        throw new Error('要保存生成结果的提示词记录不存在。');
+      }
+      record = this.database.getRecord(recordId);
     } else if (getWorkflowResultType(existingRecord.categoryId) === 'content') {
       if (typeof content !== 'string' || content.trim().length === 0) {
         throw new Error('创作内容不能为空。');
       }
-      if (contentZh !== undefined || contentEn !== undefined) {
+      if (episodes !== undefined || contentZh !== undefined || contentEn !== undefined) {
         throw new Error('该工作流只能提交单篇创作内容。');
       }
       record = this.database.updateGeneratedContent(recordId, content);
@@ -248,7 +272,7 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       if (typeof contentEn !== 'string' || contentEn.trim().length === 0) {
         throw new Error('英文提示词不能为空。');
       }
-      if (content !== undefined) {
+      if (content !== undefined || episodes !== undefined) {
         throw new Error('该工作流必须提交中英文提示词，不接受单篇创作内容。');
       }
       record = this.database.updateGeneratedResult(recordId, contentZh, contentEn);
@@ -266,4 +290,30 @@ export class GeneratedResultTool implements vscode.LanguageModelTool<SaveGenerat
       }))
     ]);
   }
+}
+
+function isGeneratedEpisodeContentArray(value: unknown): value is readonly GeneratedEpisodeContent[] {
+  return Array.isArray(value) && value.every((episode) =>
+    typeof episode === 'object' && episode !== null && !Array.isArray(episode) &&
+    Object.keys(episode).length === 3 &&
+    'episodeNumber' in episode && Number.isSafeInteger(episode.episodeNumber) &&
+    'title' in episode && typeof episode.title === 'string' &&
+    'content' in episode && typeof episode.content === 'string'
+  );
+}
+
+function getConfiguredMaxEpisodes(value: unknown): number {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || !('maxEpisodes' in value)) {
+    throw new Error('记录中缺少最大总集数设置。');
+  }
+  const configuredValue = value.maxEpisodes;
+  const maxEpisodes = typeof configuredValue === 'number'
+    ? configuredValue
+    : typeof configuredValue === 'string' && /^[0-9]+$/.test(configuredValue)
+      ? Number(configuredValue)
+      : Number.NaN;
+  if (!Number.isSafeInteger(maxEpisodes) || maxEpisodes < 1 || maxEpisodes > MAX_GENERATED_EPISODES) {
+    throw new Error(`最大总集数必须是 1 到 ${MAX_GENERATED_EPISODES} 之间的整数。`);
+  }
+  return maxEpisodes;
 }

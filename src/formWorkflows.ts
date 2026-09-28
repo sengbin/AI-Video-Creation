@@ -1,8 +1,13 @@
+import { MAX_GENERATED_EPISODES } from './episodeContent';
+
 export interface FormField {
   readonly name: string;
   readonly label: string;
   readonly description: string;
   readonly placeholder?: string;
+  readonly inputType?: 'number';
+  readonly min?: number;
+  readonly max?: number;
   readonly options?: readonly string[];
   readonly allowCustom?: boolean;
   readonly required?: boolean;
@@ -19,6 +24,8 @@ export interface FormWorkflow {
   readonly supportsImageAttachments?: boolean;
   /** 是否需要按合集记录集数；视觉资产工作流设为 false。 */
   readonly supportsEpisodeNumber?: boolean;
+  /** 是否以独立分集内容返回生成结果。 */
+  readonly supportsEpisodeContent?: boolean;
 }
 
 export type WorkflowResultType = 'content' | 'prompt';
@@ -109,12 +116,15 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '创意写作',
     promptPath: 'copilot-customizations/prompts/creative-writing.prompt.md',
     resultType: 'content',
+    supportsEpisodeNumber: false,
+    supportsEpisodeContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'idea', label: '创作主题或灵感', description: '填写创作主题、核心创意或灵感', placeholder: '例如：一名失忆的灯塔守夜人，每晚都会收到来自未来的求救信号' },
       { name: 'genre', label: '题材', description: '例如悬疑、爱情、科幻', placeholder: '例如：悬疑科幻' },
-      { name: 'duration', label: '目标篇幅或时长', description: '填写目标字数、篇幅、时长或集数', placeholder: '例如：约2000字；或6集、每集约5分钟' },
+      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
+      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据素材判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
       { name: 'style', label: '表达风格', description: '填写期望的作品风格', placeholder: '例如：简洁克制、富有画面感，结尾留有余味' },
       { name: 'additionalInfo', label: '补充要求', description: '填写主题、人物、结构、结尾、内容边界或交付格式等要求', placeholder: '例如：主题是信任与放下；先输出创作大纲，避免血腥内容' }
     ]
@@ -124,12 +134,15 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '图片灵感写作',
     promptPath: 'copilot-customizations/prompts/image-inspired-writing.prompt.md',
     resultType: 'content',
+    supportsEpisodeNumber: false,
+    supportsEpisodeContent: true,
     supportsImageAttachments: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据图片和已填写内容继续。保存并运行时至少添加一张图片。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'genre', label: '题材或主题', description: '例如悬疑、奇幻、现实题材', placeholder: '例如：带有奇幻元素的悬疑作品' },
-      { name: 'duration', label: '目标篇幅或时长', description: '填写目标字数、篇幅、时长或集数', placeholder: '例如：约1500字；或4集、每集约5分钟' },
+      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
+      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据素材判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
       { name: 'visualElements', label: '图片中必须保留的元素', description: '填写必须保留的人物、物件、环境或构图', placeholder: '例如：保留红色雨伞、石阶和远处的灯塔' },
       { name: 'additionalInfo', label: '补充要求', description: '填写人物、情绪、结构、结尾、多图顺序或交付格式等要求', placeholder: '例如：按上传顺序展开内容，输出文章提纲，结尾保持开放' }
     ]
@@ -139,11 +152,14 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '小说重创作',
     promptPath: 'copilot-customizations/prompts/novel-adaptation.prompt.md',
     resultType: 'content',
+    supportsEpisodeNumber: false,
+    supportsEpisodeContent: true,
     notice: '标题为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据原作和已填写内容继续。请在 Copilot 聊天中粘贴或附上原作。',
     fields: [
       RECORD_TITLE_FIELD,
       { name: 'target', label: '改编目标', description: '例如短片、短剧、分集剧本', placeholder: '例如：改编为8集竖屏短剧' },
-      { name: 'scope', label: '目标篇幅', description: '填写总时长或集数及单集时长', placeholder: '例如：总时长约40分钟；或8集、每集约5分钟' },
+      { name: 'episodeDurationSeconds', label: '单集时长（秒）', description: '填写每集目标时长', placeholder: '例如：30', inputType: 'number', min: 1, required: true },
+      { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限（1-100）；Copilot 根据原作内容判断实际集数，不会为达到上限而扩写', placeholder: '例如：100', inputType: 'number', min: 1, max: MAX_GENERATED_EPISODES, required: true },
       { name: 'preserve', label: '必须保留的内容', description: '列出必须保留的人物、情节或设定', placeholder: '例如：保留主角身份、核心谜题和原作结局' },
       { name: 'adjustments', label: '允许调整的内容', description: '说明允许删改、合并或重构的部分', placeholder: '例如：可合并支线人物，压缩中段调查过程' },
       { name: 'additionalInfo', label: '补充要求', description: '填写改编风格、题材、结局或交付格式等其他要求', placeholder: '例如：保留原作冷峻基调，先输出逐集大纲' }
@@ -263,4 +279,11 @@ export function getWorkflowResultType(workflowName: string): WorkflowResultType 
   }
 
   return workflow.resultType;
+}
+
+/** 判断工作流是否要求按集提交创作结果。 */
+export function isEpisodeContentWorkflow(workflowName: string): boolean {
+  return formWorkflows.some((workflow) =>
+    workflow.toolName === workflowName && workflow.supportsEpisodeContent === true
+  );
 }

@@ -242,11 +242,25 @@ function readFormValues(value: unknown, workflow: FormWorkflow): FormValues | un
   if (workflow.supportsImageAttachments) {
     expectedNames.push(IMAGE_ATTACHMENTS_FIELD);
   }
+  const invalidNumberField = workflow.fields.some((field) => {
+    if (field.inputType !== 'number') {
+      return false;
+    }
+    const rawValue = value[field.name];
+    if (typeof rawValue !== 'string' || !/^[0-9]+$/.test(rawValue)) {
+      return true;
+    }
+    const numericValue = Number(rawValue);
+    return !Number.isSafeInteger(numericValue) ||
+      (field.min !== undefined && numericValue < field.min) ||
+      (field.max !== undefined && numericValue > field.max);
+  });
   const actualNames = Object.keys(value);
   if (actualNames.length !== expectedNames.length ||
       expectedNames.some((name) => typeof value[name] !== 'string') ||
       actualNames.some((name) => !expectedNames.includes(name)) ||
       fields.some((field) => field.required && !(value[field.name] as string).trim()) ||
+      invalidNumberField ||
       fields.some((field) => field.options && !field.allowCustom && value[field.name] !== '' && !field.options.includes(value[field.name] as string)) ||
       fields.some((field) => field.allowCustom && value[field.name] === CUSTOM_OPTION_VALUE)) {
     return undefined;
@@ -362,6 +376,13 @@ function createFormHtml(
       border-radius: 3px; font: inherit; line-height: 1.45;
     }
     #episode-number:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    input[type="number"] {
+      width: 100%; min-height: 38px; padding: 9px 10px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      border-radius: 3px; font: inherit; line-height: 1.45;
+    }
+    input[type="number"]:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     textarea { max-height: calc(17.4em + 20px); overflow-y: auto; }
     select { min-height: 38px; resize: none; }
     .collection-picker { position: relative; width: 100%; }
@@ -891,6 +912,9 @@ function renderField(field: FormField, initialValue: string): string {
   const description = escapeHtml(field.description);
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
   const required = field.required ? ' required' : '';
+  const numericAttributes = field.inputType === 'number'
+    ? ` type="number" step="1" inputmode="numeric"${field.min === undefined ? '' : ` min="${field.min}"`}${field.max === undefined ? '' : ` max="${field.max}"`}`
+    : '';
   const control = field.options
     ? `<div class="select-with-custom">
         <select id="${name}" name="${name}"${required}${field.allowCustom ? ` data-custom-input="${name}-custom"` : ''}>
@@ -900,7 +924,9 @@ function renderField(field: FormField, initialValue: string): string {
         </select>
         ${field.allowCustom ? `<input class="custom-option" id="${name}-custom" name="${name}__custom" type="text" placeholder="输入自定义内容" value="${initialValue !== '' && !field.options.includes(initialValue) ? escapeHtml(initialValue) : ''}" disabled hidden>` : ''}
       </div>`
-    : `<textarea id="${name}" name="${name}"${placeholder}${required} rows="1" spellcheck="true">${escapeHtml(initialValue)}</textarea>`;
+    : field.inputType === 'number'
+      ? `<input id="${name}" name="${name}"${numericAttributes}${placeholder}${required} value="${escapeHtml(initialValue)}">`
+      : `<textarea id="${name}" name="${name}"${placeholder}${required} rows="1" spellcheck="true">${escapeHtml(initialValue)}</textarea>`;
 
   return `<div class="field">
         <div class="field-heading">

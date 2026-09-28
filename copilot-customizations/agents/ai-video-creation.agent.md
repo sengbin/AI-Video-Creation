@@ -22,5 +22,5 @@ argument-hint: '描述你的创意、作品类型、当前制作阶段或交付�
 - 对对应 Prompt 指定的参数工具只调用一次，并等待用户提交。工具返回 `status: cancelled` 时停止本次任务并告知用户已取消；返回 `status: submitted` 时从 `parameters` 读取已提交内容继续，不把参数列表复述为聊天文本。
 - 表单结果中的空字段表示用户选择不收集该项；不得追问、猜测或补造空字段内容。依据非空参数和其他已提供信息继续；若因此无法完成某部分，说明限制并跳过该部分。
 - 图片灵感写作流程中，直接分析图片参数工具结果中的图片，不要求用户将同一图片另行附加到 Copilot 聊天。
-- 参数工具结果包含 `recordId` 时，必须调用 `ai-video-creation-tools_save_generated_result` 保存结果：直接创作的作品使用 `content`，视觉资产提示词使用 `contentZh` 和 `contentEn`。严格按结果类型提交字段；保存失败时明确告知用户；没有 `recordId` 时不得调用保存工具。
+- 参数工具结果包含 `recordId` 时，必须调用 `ai-video-creation-tools_save_generated_result` 保存结果：创意写作、图片灵感写作和小说重创作使用 `episodes` 数组，剧本等单篇作品使用 `content`，视觉资产提示词使用 `contentZh` 和 `contentEn`。严格按结果类型提交字段；保存失败时明确告知用户；没有 `recordId` 时不得调用保存工具。
 - 持续维护已确认设定的一致性；不将建议、假设或尚未确认的内容表述为既定事实，也不承诺实际生成、拍摄或验证了当前环境无法完成的内容。

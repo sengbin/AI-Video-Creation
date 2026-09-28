@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as vscode from 'vscode';
+import { GeneratedEpisodeContent, MAX_GENERATED_EPISODES } from './episodeContent';
 
 /** 新增一条提示词记录及其合集归属。 */
 export interface NewPromptRecord {
@@ -107,6 +108,7 @@ export class PromptDatabase implements vscode.Disposable {
     );
 
     try {
+      connection.exec('PRAGMA foreign_keys = ON');
       connection.exec(`
         CREATE TABLE IF NOT EXISTS prompt_records (
           id TEXT PRIMARY KEY NOT NULL,
@@ -359,6 +361,58 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.recordsChangedEmitter.fire();
     return this.getRecord(id);
+  }
+
+  /** 查询指定创作任务已保存的分集内容。 */
+  listGeneratedEpisodeContents(recordId: string): GeneratedEpisodeContent[] {
+    const rows = this.connection.prepare(`
+      SELECT episode_number, title, content
+      FROM generated_episode_contents
+      WHERE record_id = ?
+      ORDER BY episode_number
+    `).all(recordId) as { episode_number: number; title: string; content: string }[];
+
+    return rows.map((row) => ({
+      episodeNumber: row.episode_number,
+      title: row.title,
+      content: row.content
+    }));
+  }
+
+  /** 以单个事务替换指定任务的全部分集内容。 */
+  saveGeneratedEpisodeContents(id: string, episodes: readonly GeneratedEpisodeContent[]): boolean {
+    if (episodes.length < 1 || episodes.length > MAX_GENERATED_EPISODES) {
+      throw new Error(`分集数量必须在 1 到 ${MAX_GENERATED_EPISODES} 集之间。`);
+    }
+    episodes.forEach((episode, index) => {
+      if (episode.episodeNumber !== index + 1 || !episode.title.trim() || !episode.content.trim()) {
+        throw new Error('每集必须按顺序提供连续集数、标题和正文。');
+      }
+    });
+    if (!this.connection.prepare('SELECT 1 FROM prompt_records WHERE id = ?').get(id)) {
+      return false;
+    }
+
+    const createdAt = new Date().toISOString();
+    const insertEpisode = this.connection.prepare(`
+      INSERT INTO generated_episode_contents (record_id, episode_number, title, content, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    this.connection.exec('BEGIN');
+    try {
+      this.connection.prepare('DELETE FROM generated_episode_contents WHERE record_id = ?').run(id);
+      for (const episode of episodes) {
+        insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), createdAt);
+      }
+      this.connection.prepare('UPDATE prompt_records SET updated_at = ? WHERE id = ?').run(createdAt, id);
+      this.connection.exec('COMMIT');
+    } catch (error) {
+      this.connection.exec('ROLLBACK');
+      throw error;
+    }
+
+    this.recordsChangedEmitter.fire();
+    return true;
   }
 
   /**
@@ -630,6 +684,17 @@ function migratePromptRecords(connection: DatabaseSync): void {
     if (!columnNames.has('generated_result_content')) {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_result_content TEXT');
     }
+
+    connection.exec(`
+      CREATE TABLE IF NOT EXISTS generated_episode_contents (
+        record_id TEXT NOT NULL REFERENCES prompt_records(id) ON DELETE CASCADE,
+        episode_number INTEGER NOT NULL CHECK (episode_number BETWEEN 1 AND ${MAX_GENERATED_EPISODES}),
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (record_id, episode_number)
+      )
+    `);
 
     const updateResult = connection.prepare(`
       UPDATE prompt_records
