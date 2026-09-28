@@ -1011,12 +1011,31 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .empty { padding: 24px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
     dialog {
-      width: min(440px, calc(100vw - 32px)); padding: 20px;
-      color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px;
+      position: fixed; inset: 50% auto auto 50%; display: flex; width: min(480px, calc(100vw - 32px)); max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 40px); flex-direction: column; overflow: hidden; padding: 0;
+      margin: 0; color: var(--vscode-foreground); background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      transform: translate(-50%, -50%);
+      border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px;
     }
+    dialog:not([open]) { display: none; }
+    dialog[open] { display: flex; }
     dialog::backdrop { background: var(--vscode-widget-shadow); opacity: .55; }
-    dialog h2 { margin: 0 0 12px; font-size: 16px; }
+    dialog form { min-height: 0; margin: 0; }
+    .dialog-header {
+      display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 3px 6px 3px 14px; color: #F3F3F3; background: #292929; cursor: move; user-select: none;
+      border-bottom: 1px solid rgba(255,255,255,.14);
+    }
+    .dialog-header h2 { min-width: 0; margin: 0; overflow-wrap: anywhere; color: inherit; font-size: 13px; font-weight: 600; }
+    .dialog-close {
+      display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; padding: 0;
+      color: #F3F3F3; background: transparent; border: 0; border-radius: 3px; font-size: 20px; line-height: 1; cursor: pointer;
+    }
+    .dialog-close:hover { background: #C42B1C; }
+    .dialog-close:active { background: #A32319; }
+    .dialog-close:focus-visible { outline: 1px solid #FFFFFF; outline-offset: -2px; }
+    dialog > form { display: flex; min-height: 0; flex-direction: column; }
+    .dialog-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 16px; }
     dialog p { margin: 0 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
     .delete-title-highlight { padding: 2px 5px; color: var(--vscode-foreground); background: var(--vscode-editor-background); border-radius: 3px; }
     .delete-warning { color: var(--vscode-errorForeground); font-weight: 700; }
@@ -1031,7 +1050,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .delete-error[hidden] { display: none; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     #confirm-delete:disabled { cursor: default; }
-    .result-dialog { width: min(900px, calc(100vw - 32px)); }
+    .result-dialog { width: min(680px, calc(100vw - 32px)); }
+    #episode-content-dialog { width: min(580px, calc(100vw - 32px)); }
     .result-error { margin: 8px 0 0; color: var(--vscode-errorForeground); }
     .result-error[hidden] { display: none; }
     .result-field { display: grid; gap: 6px; margin-top: 12px; }
@@ -1059,6 +1079,15 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     .episode-content-cell { min-width: 0; overflow-wrap: anywhere; }
     .episode-content-empty { margin: 0; padding: 20px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     .episode-content-empty[hidden] { display: none; }
+    .dialog-resize-handle { position: absolute; z-index: 2; touch-action: none; user-select: none; }
+    .dialog-resize-horizontal { top: 36px; right: 0; bottom: 10px; width: 7px; cursor: ew-resize; }
+    .dialog-resize-vertical { right: 10px; bottom: 0; left: 10px; height: 7px; cursor: ns-resize; }
+    .dialog-resize-corner { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+    .dialog-resize-corner::after {
+      position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px;
+      border-right: 1px solid var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-descriptionForeground);
+      content: "";
+    }
     @media (max-width: 720px) {
       main { padding: 16px 12px; }
       .table-header, .record-row { grid-template-columns: minmax(0, 1fr) 86px 96px; gap: 5px; }
@@ -1113,66 +1142,96 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </form>
     </section>
     <dialog id="collection-warning-dialog" aria-labelledby="collection-warning-title">
-      <h2 id="collection-warning-title">删除合集</h2>
-      <p class="delete-warning">此操作不可撤销。删除合集会同时删除该合集下的所有任务数据及已生成内容。</p>
-      <p id="collection-warning-name"></p>
-      <div class="dialog-actions">
-        <button id="cancel-collection-warning" type="button">取消</button>
-        <button id="continue-collection-delete" class="delete-button" type="button">继续删除</button>
+      <div class="dialog-header">
+        <h2 id="collection-warning-title">删除合集</h2>
+        <button class="dialog-close" id="close-collection-warning" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
+      <div class="dialog-body">
+        <p class="delete-warning">此操作不可撤销。删除合集会同时删除该合集下的所有任务数据及已生成内容。</p>
+        <p id="collection-warning-name"></p>
+        <div class="dialog-actions">
+          <button id="cancel-collection-warning" type="button">取消</button>
+          <button id="continue-collection-delete" class="delete-button" type="button">继续删除</button>
+        </div>
+      </div>
+      <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
     <dialog id="delete-dialog" aria-labelledby="delete-dialog-title">
       <form id="delete-form">
-        <h2 id="delete-dialog-title">确认删除记录</h2>
-        <p id="delete-prompt"></p>
-        <label for="delete-title">确认标题</label>
-        <input id="delete-title" type="text" autocomplete="off" spellcheck="false">
-        <p id="delete-error" class="delete-error" role="alert" hidden></p>
-        <div class="dialog-actions">
-          <button id="cancel-delete" type="button">取消</button>
-          <button id="confirm-delete" type="submit" disabled>删除</button>
+        <div class="dialog-header">
+          <h2 id="delete-dialog-title">确认删除记录</h2>
+          <button class="dialog-close" id="close-delete" type="button" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="dialog-body">
+          <p id="delete-prompt"></p>
+          <label for="delete-title">确认标题</label>
+          <input id="delete-title" type="text" autocomplete="off" spellcheck="false">
+          <p id="delete-error" class="delete-error" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button id="cancel-delete" type="button">取消</button>
+            <button id="confirm-delete" type="submit" disabled>删除</button>
+          </div>
         </div>
       </form>
+      <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
     <dialog id="episode-content-dialog" class="result-dialog" aria-labelledby="episode-content-dialog-title">
-      <h2 id="episode-content-dialog-title">查看内容</h2>
-      <div class="episode-content-table" role="table" aria-label="分集内容列表">
-        <div class="episode-content-header" role="row"><span role="columnheader">集数</span><span role="columnheader">标题</span></div>
-        <div id="episode-content-list" role="rowgroup"></div>
+      <div class="dialog-header">
+        <h2 id="episode-content-dialog-title">查看内容</h2>
+        <button class="dialog-close" id="close-episode-content" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
-      <p id="episode-content-empty" class="episode-content-empty" role="status" hidden>暂无已保存的分集内容</p>
-      <div class="dialog-actions"><button id="close-episode-content" type="button">关闭</button></div>
+      <div class="dialog-body">
+        <div class="episode-content-table" role="table" aria-label="分集内容列表">
+          <div class="episode-content-header" role="row"><span role="columnheader">集数</span><span role="columnheader">标题</span></div>
+          <div id="episode-content-list" role="rowgroup"></div>
+        </div>
+        <p id="episode-content-empty" class="episode-content-empty" role="status" hidden>暂无已保存的分集内容</p>
+      </div>
+      <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
     <dialog id="result-dialog" class="result-dialog" aria-labelledby="result-dialog-title">
-      <h2 id="result-dialog-title">查看结果</h2>
-      <div id="content-result-field" class="result-field" hidden>
-        <div class="result-field-heading">
-          <label id="generated-content-label" for="generated-content">Copilot 生成的内容：</label>
-          <button id="copy-content" class="result-copy-button" type="button" disabled>复制内容</button>
-        </div>
-        <textarea id="generated-content" aria-label="Copilot 生成的内容：" rows="1" placeholder="暂无已保存的 Copilot 生成的内容"></textarea>
+      <div class="dialog-header">
+        <h2 id="result-dialog-title">查看结果</h2>
+        <button class="dialog-close" id="close-result" type="button" aria-label="关闭" title="关闭">×</button>
       </div>
-      <div id="prompt-result-fields" hidden>
-        <div class="result-field">
+      <div class="dialog-body">
+        <div id="content-result-field" class="result-field" hidden>
           <div class="result-field-heading">
-            <label id="generated-result-zh-label" for="generated-result-zh">Copilot 生成的中文提示词</label>
-            <button id="copy-result-zh" class="result-copy-button" type="button" disabled>复制提示词</button>
+            <label id="generated-content-label" for="generated-content">Copilot 生成的内容：</label>
+            <button id="copy-content" class="result-copy-button" type="button" disabled>复制内容</button>
           </div>
-          <textarea id="generated-result-zh" aria-label="Copilot 生成的中文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的中文提示词"></textarea>
+          <textarea id="generated-content" aria-label="Copilot 生成的内容：" rows="1" placeholder="暂无已保存的 Copilot 生成的内容"></textarea>
         </div>
-        <div class="result-field">
-          <div class="result-field-heading">
-            <label id="generated-result-en-label" for="generated-result-en">Copilot 生成的英文提示词</label>
-            <button id="copy-result-en" class="result-copy-button" type="button" disabled>复制提示词</button>
+        <div id="prompt-result-fields" hidden>
+          <div class="result-field">
+            <div class="result-field-heading">
+              <label id="generated-result-zh-label" for="generated-result-zh">Copilot 生成的中文提示词</label>
+              <button id="copy-result-zh" class="result-copy-button" type="button" disabled>复制提示词</button>
+            </div>
+            <textarea id="generated-result-zh" aria-label="Copilot 生成的中文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的中文提示词"></textarea>
           </div>
-          <textarea id="generated-result-en" aria-label="Copilot 生成的英文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的英文提示词"></textarea>
+          <div class="result-field">
+            <div class="result-field-heading">
+              <label id="generated-result-en-label" for="generated-result-en">Copilot 生成的英文提示词</label>
+              <button id="copy-result-en" class="result-copy-button" type="button" disabled>复制提示词</button>
+            </div>
+            <textarea id="generated-result-en" aria-label="Copilot 生成的英文提示词" rows="1" placeholder="暂无已保存的 Copilot 生成的英文提示词"></textarea>
+          </div>
+        </div>
+        <p id="result-error" class="result-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button id="edit-result" type="button" disabled>保存</button>
         </div>
       </div>
-      <p id="result-error" class="result-error" role="alert" hidden></p>
-      <div class="dialog-actions">
-        <button id="close-result" type="button">关闭</button>
-        <button id="edit-result" type="button" disabled>保存</button>
-      </div>
+      <span class="dialog-resize-handle dialog-resize-horizontal" data-resize="horizontal" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-vertical" data-resize="vertical" aria-hidden="true"></span>
+      <span class="dialog-resize-handle dialog-resize-corner" data-resize="both" aria-hidden="true"></span>
     </dialog>
   </main>
   <script nonce="${nonce}">
@@ -1252,6 +1311,83 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     let viewingResultType;
     let isResultLoaded = false;
     const copyFeedbackTimers = new WeakMap();
+
+    document.querySelectorAll('dialog').forEach((dialog) => {
+      const titlebar = dialog.querySelector('.dialog-header');
+      titlebar.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || event.target.closest('button')) return;
+        event.preventDefault();
+        const startRect = dialog.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const pointerId = event.pointerId;
+        dialog.style.inset = 'auto';
+        dialog.style.left = startRect.left + 'px';
+        dialog.style.top = startRect.top + 'px';
+        dialog.style.transform = 'none';
+
+        const move = (moveEvent) => {
+          if (moveEvent.pointerId !== pointerId) return;
+          const left = startRect.left + moveEvent.clientX - startX;
+          const top = startRect.top + moveEvent.clientY - startY;
+          dialog.style.left = Math.max(8, Math.min(window.innerWidth - startRect.width - 8, left)) + 'px';
+          dialog.style.top = Math.max(8, Math.min(window.innerHeight - startRect.height - 8, top)) + 'px';
+        };
+        const finishMove = (endEvent) => {
+          if (endEvent.pointerId !== pointerId) return;
+          titlebar.removeEventListener('pointermove', move);
+          titlebar.removeEventListener('pointerup', finishMove);
+          titlebar.removeEventListener('pointercancel', finishMove);
+          titlebar.removeEventListener('lostpointercapture', finishMove);
+          if (titlebar.hasPointerCapture(pointerId)) titlebar.releasePointerCapture(pointerId);
+        };
+
+        titlebar.setPointerCapture(pointerId);
+        titlebar.addEventListener('pointermove', move);
+        titlebar.addEventListener('pointerup', finishMove);
+        titlebar.addEventListener('pointercancel', finishMove);
+        titlebar.addEventListener('lostpointercapture', finishMove);
+      });
+
+      dialog.querySelectorAll('[data-resize]').forEach((handle) => {
+        handle.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          const startRect = dialog.getBoundingClientRect();
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const axis = handle.dataset.resize;
+          const pointerId = event.pointerId;
+          dialog.style.inset = 'auto';
+          dialog.style.left = startRect.left + 'px';
+          dialog.style.top = startRect.top + 'px';
+          dialog.style.transform = 'none';
+
+          const resize = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+            if (axis === 'horizontal' || axis === 'both') {
+              dialog.style.width = Math.max(320, Math.min(window.innerWidth - 32, startRect.width + moveEvent.clientX - startX)) + 'px';
+            }
+            if (axis === 'vertical' || axis === 'both') {
+              dialog.style.height = Math.max(180, Math.min(window.innerHeight - 40, startRect.height + moveEvent.clientY - startY)) + 'px';
+            }
+          };
+          const finishResize = (endEvent) => {
+            if (endEvent.pointerId !== pointerId) return;
+            handle.removeEventListener('pointermove', resize);
+            handle.removeEventListener('pointerup', finishResize);
+            handle.removeEventListener('pointercancel', finishResize);
+            handle.removeEventListener('lostpointercapture', finishResize);
+            if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+          };
+
+          handle.setPointerCapture(pointerId);
+          handle.addEventListener('pointermove', resize);
+          handle.addEventListener('pointerup', finishResize);
+          handle.addEventListener('pointercancel', finishResize);
+          handle.addEventListener('lostpointercapture', finishResize);
+        });
+      });
+    });
 
     function makeButton(text, className, label, onClick) {
       const button = document.createElement('button');
@@ -1700,7 +1836,12 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     });
 
     document.getElementById('cancel-delete').addEventListener('click', closeDeleteDialog);
+    document.getElementById('close-delete').addEventListener('click', closeDeleteDialog);
     document.getElementById('cancel-collection-warning').addEventListener('click', () => {
+      collectionWarningDialog.close();
+      pendingDelete = undefined;
+    });
+    document.getElementById('close-collection-warning').addEventListener('click', () => {
       collectionWarningDialog.close();
       pendingDelete = undefined;
     });
