@@ -931,6 +931,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     #records-table:not(.has-episode-columns) .episode-column { display: none; }
     #records-table:not(.has-episode-content-columns) .episode-content-action-column,
     #records-table.has-episode-content-columns .row-action-column { display: none; }
+    #records-table.has-episode-content-columns .episode-content-action-column { text-align: center; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .record-row { min-height: 44px; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     .record-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1073,10 +1074,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     }
     .result-dialog textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
     .episode-content-table { max-height: min(60vh, 480px); overflow-y: auto; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 4px; }
-    .episode-content-header, .episode-content-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px 10px; }
+    .episode-content-header, .episode-content-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px 10px; }
     .episode-content-header { color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .episode-content-row + .episode-content-row { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     .episode-content-cell { min-width: 0; overflow-wrap: anywhere; }
+    .episode-content-detail { min-width: 0; }
+    .episode-content-title { display: block; margin: 0 0 6px; overflow-wrap: anywhere; font-weight: 600; }
+    .episode-content-text { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
     .episode-content-empty { margin: 0; padding: 20px 8px; color: var(--vscode-descriptionForeground); text-align: center; }
     .episode-content-empty[hidden] { display: none; }
     .dialog-resize-handle { position: absolute; z-index: 2; touch-action: none; user-select: none; }
@@ -1115,7 +1119,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>标题</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span class="episode-content-action-column">查看内容</span><span class="row-action-column"></span></div>
+          <div class="table-header" role="row"><span>标题</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span class="episode-content-action-column">编辑</span><span class="row-action-column"></span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
       </div>
@@ -1187,7 +1191,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="dialog-body">
         <div class="episode-content-table" role="table" aria-label="分集内容列表">
-          <div class="episode-content-header" role="row"><span role="columnheader">集数</span><span role="columnheader">标题</span></div>
+          <div class="episode-content-header" role="row"><span role="columnheader">集数</span><span role="columnheader">分集内容</span></div>
           <div id="episode-content-list" role="rowgroup"></div>
         </div>
         <p id="episode-content-empty" class="episode-content-empty" role="status" hidden>暂无已保存的分集内容</p>
@@ -1563,11 +1567,17 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         number.className = 'episode-content-cell';
         number.setAttribute('role', 'cell');
         number.textContent = '第 ' + episode.episodeNumber + ' 集';
-        const title = document.createElement('span');
-        title.className = 'episode-content-cell';
-        title.setAttribute('role', 'cell');
+        const detail = document.createElement('div');
+        detail.className = 'episode-content-detail';
+        detail.setAttribute('role', 'cell');
+        const title = document.createElement('strong');
+        title.className = 'episode-content-title';
         title.textContent = episode.title;
-        row.append(number, title);
+        const content = document.createElement('p');
+        content.className = 'episode-content-text';
+        content.textContent = episode.content;
+        detail.append(title, content);
+        row.append(number, detail);
         episodeContentList.append(row);
       }
     }
@@ -1698,9 +1708,13 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         title.className = 'record-title-button';
         title.textContent = record.title || '旧记录（无标题）';
         title.title = title.textContent;
-        title.setAttribute('aria-label', '编辑并提交' + title.textContent);
+        title.setAttribute('aria-label', '查看' + title.textContent + '的生成内容');
         title.addEventListener('click', () => {
-          vscode.postMessage({ command: 'select-record', recordId: record.id });
+          if (episodeContentWorkflowIds.includes(selectedCategoryId)) {
+            openEpisodeContentDialog(record);
+          } else {
+            openResultDialog(record);
+          }
         });
         titleCell.append(title);
         const collectionName = document.createElement('span');
@@ -1714,13 +1728,8 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           : '第 ' + record.episodeNumber + ' 集';
         const actions = document.createElement('div');
         actions.className = 'record-actions row-action-column';
-        const resultLabel = getResultActionLabel(selectedCategoryId);
-        const viewResult = makeButton(resultLabel, 'edit-button', resultLabel + '：' + title.textContent, () => {
-          if (episodeContentWorkflowIds.includes(selectedCategoryId)) {
-            openEpisodeContentDialog(record);
-          } else {
-            openResultDialog(record);
-          }
+        const editRecord = makeButton('编辑', 'edit-button', '编辑' + title.textContent, () => {
+          vscode.postMessage({ command: 'select-record', recordId: record.id });
         });
         const remove = makeButton('删除', 'delete-button', '删除' + title.textContent, () => {
           openDeleteDialog(record);
@@ -1728,11 +1737,11 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         if (hasEpisodeContentColumns) {
           const viewContentCell = document.createElement('span');
           viewContentCell.className = 'record-cell episode-content-action-column';
-          viewContentCell.append(viewResult);
+          viewContentCell.append(editRecord);
           actions.append(remove);
           row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), viewContentCell, actions);
         } else {
-          actions.append(viewResult, remove);
+          actions.append(editRecord, remove);
           row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), actions);
         }
         recordList.append(row);
