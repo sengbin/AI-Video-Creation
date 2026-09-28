@@ -737,6 +737,10 @@ function createCategoryHtml(): string {
             <button id="open-collections" class="select" type="button">合集管理</button>
             <button id="create-collection" class="add" type="button">创建</button>
           </div>
+          <div class="category-item">
+            <button class="select" type="button">模型配置（预览）</button>
+            <button class="add" type="button">添加</button>
+          </div>
         </nav>
       </div>
     </section>
