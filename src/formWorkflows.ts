@@ -20,6 +20,8 @@ export interface FormWorkflow {
   readonly resultType: WorkflowResultType;
   readonly notice: string;
   readonly fields: readonly FormField[];
+  /** 是否在参数表单中显示“保存并运行”按钮。 */
+  readonly showRunButton?: boolean;
   /** 参数表单是否接受用户附加图片。 */
   readonly supportsImageAttachments?: boolean;
   /** 是否需要按合集记录集数；视觉资产工作流设为 false。 */

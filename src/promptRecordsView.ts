@@ -200,6 +200,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       await this.editRecord(message.recordId);
       return;
     }
+    if (message.command === 'run-record') {
+      await this.runRecord(message.recordId);
+      return;
+    }
     if (message.command === 'collection-filter') {
       if (typeof message.collectionId !== 'string' ||
           (message.collectionId !== 'all' && message.collectionId !== '0' &&
@@ -434,7 +438,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     const editWorkflow: FormWorkflow = {
       ...workflow,
       title: `选择${workflow.title}信息`,
-      notice: '可直接保存当前内容，也可以修改后保存；选择保存并运行时将使用这些参数运行提示词。',
+      notice: '可修改参数并保存；需要生成内容时，请在任务列表中选择“运行生成”。',
+      showRunButton: false,
       fields
     };
     const submission = await collectViewForm(
@@ -463,6 +468,20 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (submission.runPrompt) {
       await this.runSubmittedPrompt(workflow, submission.values, record.id, submission.episodeNumber);
     }
+  }
+
+  private async runRecord(recordId: string | undefined): Promise<void> {
+    if (typeof recordId !== 'string') {
+      throw new Error('记录标识缺失。');
+    }
+
+    const record = this.database.getRecord(recordId);
+    if (!record) {
+      throw new Error('要运行的记录不存在或已被删除。');
+    }
+
+    const workflow = this.findWorkflow(record.categoryId);
+    await this.runSubmittedPrompt(workflow, readFormValues(record.data), record.id, record.episodeNumber);
   }
 
   /** 将已提交参数及其记录标识交给对应的 Prompt 工具并启动提示词。 */
@@ -598,7 +617,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       collectionName: collectionNames.get(record.collectionId),
       episodeNumber: record.episodeNumber,
       createdAt: record.createdAt,
-      updatedAt: record.updatedAt
+      generatedAt: record.generatedAt
     }));
 
     void this.panel.webview.postMessage({
@@ -932,6 +951,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     #records-table:not(.has-episode-content-columns) .episode-content-action-column,
     #records-table.has-episode-content-columns .row-action-column { display: none; }
     #records-table.has-episode-content-columns .episode-content-action-column { text-align: center; }
+    #records-table.has-episode-content-columns .episode-content-action-column > .record-actions { justify-content: center; }
     .table-header { padding: 10px 8px; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); }
     .record-row { min-height: 44px; padding: 5px 8px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     .record-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1119,7 +1139,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>标题</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span class="episode-content-action-column">编辑</span><span class="row-action-column"></span></div>
+          <div class="table-header" role="row"><span>查看生成内容</span><span class="collection-column">合集名称</span><span class="episode-column">当前集数</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="episode-content-action-column">操作</span><span class="row-action-column"></span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
       </div>
@@ -1421,6 +1441,18 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function makeTime(value) {
       const time = document.createElement('span');
       time.className = 'record-cell record-time';
+      time.textContent = dateFormatter.format(new Date(value));
+      time.title = new Date(value).toLocaleString();
+      return time;
+    }
+
+    function makeGeneratedTime(value) {
+      const time = document.createElement('span');
+      time.className = 'record-cell record-time generated-time-column';
+      if (!value) {
+        time.textContent = '-';
+        return time;
+      }
       time.textContent = dateFormatter.format(new Date(value));
       time.title = new Date(value).toLocaleString();
       return time;
@@ -1728,6 +1760,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
           : '第 ' + record.episodeNumber + ' 集';
         const actions = document.createElement('div');
         actions.className = 'record-actions row-action-column';
+        const runRecord = makeButton('运行生成', 'edit-button', '运行生成' + title.textContent, () => {
+          vscode.postMessage({ command: 'run-record', recordId: record.id });
+        });
         const editRecord = makeButton('编辑', 'edit-button', '编辑' + title.textContent, () => {
           vscode.postMessage({ command: 'select-record', recordId: record.id });
         });
@@ -1737,12 +1772,15 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
         if (hasEpisodeContentColumns) {
           const viewContentCell = document.createElement('span');
           viewContentCell.className = 'record-cell episode-content-action-column';
-          viewContentCell.append(editRecord);
+          const recordActions = document.createElement('div');
+          recordActions.className = 'record-actions';
+          recordActions.append(runRecord, editRecord);
+          viewContentCell.append(recordActions);
           actions.append(remove);
-          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), viewContentCell, actions);
+          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), viewContentCell, actions);
         } else {
-          actions.append(editRecord, remove);
-          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), actions);
+          actions.append(runRecord, editRecord, remove);
+          row.append(titleCell, collectionName, episodeNumber, makeTime(record.createdAt), makeGeneratedTime(record.generatedAt), actions);
         }
         recordList.append(row);
       }

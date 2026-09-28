@@ -31,7 +31,7 @@ export interface PromptRecord {
   readonly generatedResultEnglish: string | undefined;
   readonly generatedResultContent: string | undefined;
   readonly createdAt: string;
-  readonly updatedAt: string;
+  readonly generatedAt: string | undefined;
 }
 
 /** 修改提示词记录时可更新的字段。 */
@@ -84,7 +84,7 @@ interface StoredPromptRecord {
   readonly generated_result_english: string | null;
   readonly generated_result_content: string | null;
   readonly created_at: string;
-  readonly updated_at: string;
+  readonly generated_at: string | null;
 }
 
 /**
@@ -123,7 +123,7 @@ export class PromptDatabase implements vscode.Disposable {
           generated_result_english TEXT,
           generated_result_content TEXT,
           created_at TEXT NOT NULL,
-          updated_at TEXT
+          generated_at TEXT
         );
         CREATE INDEX IF NOT EXISTS prompt_records_category_created_idx
           ON prompt_records (category_id, created_at DESC);
@@ -158,7 +158,7 @@ export class PromptDatabase implements vscode.Disposable {
 
     this.connection.prepare(`
       INSERT INTO prompt_records (
-        id, title, category_id, category_name, collection_id, episode_number, schema_json, data_json, created_at, updated_at
+        id, title, category_id, category_name, collection_id, episode_number, schema_json, data_json, created_at, generated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
@@ -170,7 +170,7 @@ export class PromptDatabase implements vscode.Disposable {
       schemaJson,
       dataJson,
       record.createdAt,
-      record.createdAt
+      null
     );
 
     this.recordsChangedEmitter.fire();
@@ -179,7 +179,7 @@ export class PromptDatabase implements vscode.Disposable {
       generatedResultChinese: undefined,
       generatedResultEnglish: undefined,
       generatedResultContent: undefined,
-      updatedAt: record.createdAt
+      generatedAt: undefined
     };
   }
 
@@ -303,12 +303,11 @@ export class PromptDatabase implements vscode.Disposable {
     }
     const schemaJson = serializeJson(input.schema, 'schema');
     const dataJson = serializeJson(input.data, 'data');
-    const updatedAt = new Date().toISOString();
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET title = ?, collection_id = ?, episode_number = ?, schema_json = ?, data_json = ?, updated_at = ?
+      SET title = ?, collection_id = ?, episode_number = ?, schema_json = ?, data_json = ?
       WHERE id = ?
-    `).run(input.title, input.collectionId, input.episodeNumber ?? null, schemaJson, dataJson, updatedAt, id);
+    `).run(input.title, input.collectionId, input.episodeNumber ?? null, schemaJson, dataJson, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -326,12 +325,12 @@ export class PromptDatabase implements vscode.Disposable {
    * @returns 更新后的记录；记录不存在时返回 undefined。
    */
   updateGeneratedResult(id: string, contentZh: string, contentEn: string): PromptRecord | undefined {
-    const updatedAt = new Date().toISOString();
+    const generatedAt = new Date().toISOString();
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET generated_result_chinese = ?, generated_result_english = ?, updated_at = ?
+      SET generated_result_chinese = ?, generated_result_english = ?, generated_at = ?
       WHERE id = ?
-    `).run(contentZh, contentEn, updatedAt, id);
+    `).run(contentZh, contentEn, generatedAt, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -348,12 +347,12 @@ export class PromptDatabase implements vscode.Disposable {
    * @returns 更新后的记录；记录不存在时返回 undefined。
    */
   updateGeneratedContent(id: string, content: string): PromptRecord | undefined {
-    const updatedAt = new Date().toISOString();
+    const generatedAt = new Date().toISOString();
     const result = this.connection.prepare(`
       UPDATE prompt_records
-      SET generated_result_content = ?, updated_at = ?
+      SET generated_result_content = ?, generated_at = ?
       WHERE id = ?
-    `).run(content, updatedAt, id);
+    `).run(content, generatedAt, id);
 
     if (Number(result.changes) === 0) {
       return undefined;
@@ -393,7 +392,7 @@ export class PromptDatabase implements vscode.Disposable {
       return false;
     }
 
-    const createdAt = new Date().toISOString();
+    const generatedAt = new Date().toISOString();
     const insertEpisode = this.connection.prepare(`
       INSERT INTO generated_episode_contents (record_id, episode_number, title, content, created_at)
       VALUES (?, ?, ?, ?, ?)
@@ -402,9 +401,9 @@ export class PromptDatabase implements vscode.Disposable {
     try {
       this.connection.prepare('DELETE FROM generated_episode_contents WHERE record_id = ?').run(id);
       for (const episode of episodes) {
-        insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), createdAt);
+        insertEpisode.run(id, episode.episodeNumber, episode.title.trim(), episode.content.trim(), generatedAt);
       }
-      this.connection.prepare('UPDATE prompt_records SET updated_at = ? WHERE id = ?').run(createdAt, id);
+      this.connection.prepare('UPDATE prompt_records SET generated_at = ? WHERE id = ?').run(generatedAt, id);
       this.connection.exec('COMMIT');
     } catch (error) {
       this.connection.exec('ROLLBACK');
@@ -615,7 +614,7 @@ function readRecord(row: StoredPromptRecord): PromptRecord {
     generatedResultEnglish: row.generated_result_english ?? undefined,
     generatedResultContent: row.generated_result_content ?? undefined,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    generatedAt: row.generated_at ?? undefined
   };
 }
 
@@ -666,8 +665,8 @@ function migratePromptRecords(connection: DatabaseSync): void {
     if (!columnNames.has('title')) {
       connection.exec('ALTER TABLE prompt_records ADD COLUMN title TEXT');
     }
-    if (!columnNames.has('updated_at')) {
-      connection.exec('ALTER TABLE prompt_records ADD COLUMN updated_at TEXT');
+    if (!columnNames.has('generated_at')) {
+      connection.exec('ALTER TABLE prompt_records ADD COLUMN generated_at TEXT');
     }
     if (!columnNames.has('collection_id')) {
       connection.exec("ALTER TABLE prompt_records ADD COLUMN collection_id TEXT NOT NULL DEFAULT '0'");
@@ -726,15 +725,14 @@ function migratePromptRecords(connection: DatabaseSync): void {
       'ai-video-creation-tools_collect_image_story_parameters'
     );
 
+    connection.exec('DROP INDEX IF EXISTS prompt_records_category_updated_idx');
+    if (columnNames.has('updated_at')) {
+      connection.exec('ALTER TABLE prompt_records DROP COLUMN updated_at');
+    }
     connection.exec(`
-      UPDATE prompt_records
-      SET updated_at = created_at
-      WHERE updated_at IS NULL;
       UPDATE prompt_records
       SET collection_id = '0'
       WHERE collection_id IS NULL OR collection_id = '';
-      CREATE INDEX IF NOT EXISTS prompt_records_category_updated_idx
-        ON prompt_records (category_id, updated_at DESC);
       DROP INDEX IF EXISTS prompt_records_collection_episode_unique_idx;
       CREATE UNIQUE INDEX IF NOT EXISTS prompt_records_collection_task_episode_unique_idx
         ON prompt_records (collection_id, category_id, episode_number)

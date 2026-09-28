@@ -309,6 +309,9 @@ function createFormHtml(
     initialValues.collectionId ?? '0',
     episodeContext.initialEpisodeNumber
   );
+  const runButton = workflow.showRunButton === false
+    ? ''
+    : '<button class="primary" id="submit" type="submit">保存并运行</button>';
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -469,7 +472,7 @@ function createFormHtml(
           <button class="secondary" id="cancel" type="button">取消</button>
           <button class="secondary" id="save" type="button">保存</button>
         </div>
-        <button class="primary" id="submit" type="submit">保存并运行</button>
+        ${runButton}
       </div>
     </form>
   </main>
@@ -478,6 +481,7 @@ function createFormHtml(
     const form = document.getElementById('parameter-form');
     const saveButton = document.getElementById('save');
     const submitButton = document.getElementById('submit');
+    const canRunPrompt = ${workflow.showRunButton !== false};
     const status = document.getElementById('status');
     const imageAttachmentArea = document.getElementById('image-attachment-area');
     const collectionSelect = document.getElementById('collectionId');
@@ -765,6 +769,7 @@ function createFormHtml(
     });
 
     function sendFormValues(runPrompt) {
+      if (runPrompt && !canRunPrompt) return;
       updateEpisodeNumberField();
       if (!form.reportValidity()) {
         return;
@@ -784,7 +789,7 @@ function createFormHtml(
         values['${IMAGE_ATTACHMENTS_FIELD}'] = JSON.stringify(imageAttachments);
       }
       saveButton.disabled = true;
-      submitButton.disabled = true;
+      if (submitButton) submitButton.disabled = true;
       status.textContent = '';
       vscode.postMessage({
         command: runPrompt ? 'submit' : 'save',
@@ -822,7 +827,7 @@ function createFormHtml(
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      sendFormValues(true);
+      if (canRunPrompt) sendFormValues(true);
     });
 
     saveButton.addEventListener('click', () => sendFormValues(false));
@@ -834,7 +839,7 @@ function createFormHtml(
     window.addEventListener('message', (event) => {
       if (event.data.command === 'validation-error') {
         saveButton.disabled = false;
-        submitButton.disabled = false;
+        if (submitButton) submitButton.disabled = false;
         status.textContent = event.data.text;
         if (supportsEpisodeNumber && collectionSelect.value !== '0') {
           updateEpisodeNumberField();

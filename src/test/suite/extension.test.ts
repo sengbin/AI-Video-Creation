@@ -41,6 +41,7 @@ suite('AI视频创作助手扩展', () => {
 
       assert.ok(fs.existsSync(path.join(storagePath, 'prompt-records.sqlite')));
       assert.deepStrictEqual(database.getRecord(record.id), record);
+      assert.strictEqual(record.generatedAt, undefined);
       assert.deepStrictEqual(
         database.listRecords(CREATIVE_WRITING_WORKFLOW_NAME),
         [record]
@@ -56,6 +57,7 @@ suite('AI视频创作助手扩展', () => {
       const savedResult = database.updateGeneratedResult(record.id, '中文提示词正文', 'English prompt body');
       assert.strictEqual(savedResult?.generatedResultChinese, '中文提示词正文');
       assert.strictEqual(savedResult?.generatedResultEnglish, 'English prompt body');
+      assert.ok(savedResult?.generatedAt);
       const updatedRecord = database.updateRecord(record.id, {
         title: '修改后的记录',
         collectionId: record.collectionId,
@@ -274,7 +276,7 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(record.id, 'legacy-id');
       assert.strictEqual(record.title, undefined);
       assert.strictEqual(record.collectionId, '0');
-      assert.strictEqual(record.updatedAt, record.createdAt);
+      assert.strictEqual(record.generatedAt, undefined);
       assert.strictEqual(record.generatedResultChinese, '旧版中英合并提示词');
       assert.strictEqual(record.generatedResultEnglish, undefined);
     } finally {
@@ -373,7 +375,18 @@ suite('AI视频创作助手扩展', () => {
       const record = database.getRecord('legacy-record-id');
       assert.strictEqual(record?.collectionId, 'legacy-collection-id');
       assert.strictEqual(record?.generatedResultContent, '保留的正文');
+      assert.strictEqual(record?.generatedAt, undefined);
       assert.deepStrictEqual(database.listRecords('story', 'legacy-collection-id'), [record]);
+      const migratedConnection = new DatabaseSync(databasePath);
+      try {
+        const promptColumns = migratedConnection.prepare('PRAGMA table_info(prompt_records)').all() as { name: string }[];
+        const collectionColumns = migratedConnection.prepare('PRAGMA table_info(collections)').all() as { name: string }[];
+        assert.ok(promptColumns.some((column) => column.name === 'generated_at'));
+        assert.ok(!promptColumns.some((column) => column.name === 'updated_at'));
+        assert.ok(collectionColumns.some((column) => column.name === 'updated_at'));
+      } finally {
+        migratedConnection.close();
+      }
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -521,6 +534,7 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(savedRecord?.generatedResultContent, undefined);
       assert.strictEqual(savedRecord?.generatedResultChinese, undefined);
       assert.strictEqual(savedRecord?.generatedResultEnglish, undefined);
+      assert.ok(savedRecord?.generatedAt);
       assert.deepStrictEqual(database.listGeneratedEpisodeContents(record.id), generatedEpisodes);
       await assert.rejects(
         tool.invoke({
@@ -941,8 +955,8 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(recordsViewSource.includes("if (bilingualContentWorkflowIds.includes(workflowId)) return '查看拍摄脚本';"));
     assert.ok(recordsViewSource.includes("if (episodeContentWorkflowIds.includes(workflowId) || contentWorkflowIds.includes(workflowId)) return '查看内容';"));
     assert.ok(recordsViewSource.includes("command: 'view-episodes'"));
-    assert.ok(recordsViewSource.includes('<span role="columnheader">集数</span><span role="columnheader">标题</span>'));
-    assert.ok(recordsViewSource.includes('<span class="episode-content-action-column">查看内容</span>'));
+    assert.ok(recordsViewSource.includes('<span role="columnheader">集数</span><span role="columnheader">分集内容</span>'));
+    assert.ok(recordsViewSource.includes('<span class="episode-content-action-column">操作</span>'));
     assert.ok(recordsViewSource.includes('id="generated-content" aria-label="Copilot 生成的内容："'));
     assert.ok(recordsViewSource.includes("'bilingual-content'"));
     assert.ok(recordsViewSource.includes("isScreenplay ? 'Copilot 生成的剧本内容' : 'Copilot 生成的内容'"));
