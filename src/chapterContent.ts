@@ -10,8 +10,7 @@
 */
 
 export const MAX_GENERATED_CHAPTERS = 100;
-export const MIN_CHAPTER_WORDS = 200;
-export const MAX_CHAPTER_WORDS = 20000;
+export const MIN_CHAPTER_WORDS = 100;
 
 /** 一章创作结果的章节号、标题和正文。 */
 export interface GeneratedChapterContent {

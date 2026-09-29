@@ -3,7 +3,6 @@ import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from './database';
 import {
   countChapterWords,
   GeneratedChapterContent,
-  MAX_CHAPTER_WORDS,
   MAX_GENERATED_CHAPTERS,
   MIN_CHAPTER_WORDS
 } from './chapterContent';
@@ -398,9 +397,9 @@ function getConfiguredChapterWordRange(value: unknown): { min: number; max: numb
     : typeof value.chapterMaxWords === 'string' && /^[0-9]+$/.test(value.chapterMaxWords)
       ? Number(value.chapterMaxWords)
       : Number.NaN;
-  if (!Number.isSafeInteger(min) || min < MIN_CHAPTER_WORDS || min > MAX_CHAPTER_WORDS ||
-      !Number.isSafeInteger(max) || max < MIN_CHAPTER_WORDS || max > MAX_CHAPTER_WORDS || min > max) {
-    throw new Error(`每章字数范围必须在 ${MIN_CHAPTER_WORDS} 到 ${MAX_CHAPTER_WORDS} 之间，且上限不得小于下限。`);
+  if (!Number.isSafeInteger(min) || min < MIN_CHAPTER_WORDS ||
+      !Number.isSafeInteger(max) || max < MIN_CHAPTER_WORDS || min > max) {
+    throw new Error(`每章字数范围必须是至少 ${MIN_CHAPTER_WORDS} 的整数，且上限不得小于下限。`);
   }
   return { min, max };
 }

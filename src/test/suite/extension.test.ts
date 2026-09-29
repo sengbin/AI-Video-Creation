@@ -312,7 +312,7 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(html.includes('name="chapterMinWords"'));
     assert.ok(html.includes('name="chapterMaxWords"'));
     assert.ok(html.includes('name="maxChapters"'));
-    assert.ok(/name="chapterMinWords"[^>]*value="200"/.test(html));
+    assert.ok(/name="chapterMinWords"[^>]*value="100"/.test(html));
     assert.ok(/name="chapterMaxWords"[^>]*value="2500"/.test(html));
     assert.ok(/name="maxChapters"[^>]*value="20"/.test(html));
 
@@ -328,14 +328,18 @@ suite('AI视频创作助手扩展', () => {
     const values = Object.fromEntries(workflow.fields.map((field) => [
       field.name,
       field.name === 'taskName' ? '列表新增任务' :
-        field.name === 'chapterMinWords' ? '200' :
+        field.name === 'chapterMinWords' ? '100' :
           field.name === 'chapterMaxWords' ? '2500' :
             field.name === 'maxChapters' ? '20' : field.required ? '1' : ''
     ]));
     assert.deepStrictEqual(validateWorkflowFormValues(values, workflow), values);
     assert.deepStrictEqual(
-      validateWorkflowFormValues({ ...values, chapterMinWords: '200', chapterMaxWords: '200' }, workflow),
-      { ...values, chapterMinWords: '200', chapterMaxWords: '200' }
+      validateWorkflowFormValues({ ...values, chapterMinWords: '100', chapterMaxWords: '100' }, workflow),
+      { ...values, chapterMinWords: '100', chapterMaxWords: '100' }
+    );
+    assert.strictEqual(
+      validateWorkflowFormValues({ ...values, chapterMinWords: '99' }, workflow),
+      undefined
     );
     assert.strictEqual(
       validateWorkflowFormValues({ ...values, chapterMinWords: '2500', chapterMaxWords: '1500' }, workflow),
@@ -883,6 +887,21 @@ suite('AI视频创作助手扩展', () => {
       assert.strictEqual(savedRecord?.generatedResultEnglish, undefined);
       assert.ok(savedRecord?.generatedAt);
       assert.deepStrictEqual(database.listGeneratedChapterContents(record.id), generatedChapters);
+      const largeChapterRecord = database.saveRecord({
+        taskName: '超过原上限章节',
+        categoryId: IMAGE_INSPIRED_WRITING_WORKFLOW_NAME,
+        categoryName: '图片灵感写作',
+        schema: [],
+        data: { taskName: '超过原上限章节', chapterMinWords: '100', chapterMaxWords: '25001', maxChapters: '1' }
+      });
+      await tool.invoke({
+        input: {
+          recordId: largeChapterRecord.id,
+          chapters: [{ chapterNumber: 1, title: '长章节', content: '长'.repeat(20001) }]
+        },
+        toolInvocationToken: undefined
+      }, cancellationSource.token);
+      assert.strictEqual(database.listGeneratedChapterContents(largeChapterRecord.id)[0].content.length, 20001);
       await assert.rejects(
         tool.invoke({
           input: {
@@ -1195,10 +1214,11 @@ suite('AI视频创作助手扩展', () => {
       const chapterMaxWords = workflow.fields.find((field) => field.name === 'chapterMaxWords');
       const maxChapters = workflow.fields.find((field) => field.name === 'maxChapters');
       assert.strictEqual(chapterMinWords?.inputType, 'number');
-      assert.strictEqual(chapterMinWords?.min, 200);
+      assert.strictEqual(chapterMinWords?.min, 100);
       assert.strictEqual(chapterMinWords?.required, true);
       assert.strictEqual(chapterMaxWords?.inputType, 'number');
-      assert.strictEqual(chapterMaxWords?.max, 20000);
+      assert.strictEqual(chapterMaxWords?.min, 100);
+      assert.strictEqual(chapterMaxWords?.max, undefined);
       assert.strictEqual(chapterMaxWords?.required, true);
       assert.strictEqual(maxChapters?.inputType, 'number');
       assert.strictEqual(maxChapters?.min, 1);
