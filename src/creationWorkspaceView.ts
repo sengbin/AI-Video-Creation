@@ -45,8 +45,8 @@ interface RecordsPanelSession {
   pendingProjectDialog: 'create' | undefined;
 }
 
-/** Provides an editor-area page for managing saved prompt records. */
-export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+/** Provides the AI video creation workspace and its record/project panels. */
+export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private readonly panels = new Map<string, RecordsPanelSession>();
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
@@ -56,7 +56,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private readonly databaseSubscription: vscode.Disposable;
 
   /**
-   * 创建提示词记录视图。
+  * 创建创作工作区视图。
    * @param database 用户级记录数据库。
    * @param workflows 可用的提示词工作流。
    * @param extensionUri 扩展安装目录 URI。
@@ -924,7 +924,7 @@ function createCategoryHtml(): string {
     <div id="category-list"></div>
     <section class="card">
       <div class="card-inner config-card">
-        <h2>管理</h2>
+        <h2>项目</h2>
         <nav aria-label="设置">
           <div class="category-item">
             <button id="open-projects" class="select" type="button">项目管理</button>
@@ -990,7 +990,7 @@ function createCategoryHtml(): string {
     });
     const categoryStages = [
       {
-        title: '内容创作',
+        title: '内容',
         categoryIds: [
           'ai-video-creation-tools_collect_creative_writing_parameters',
           'ai-video-creation-tools_collect_image_inspired_writing_parameters',

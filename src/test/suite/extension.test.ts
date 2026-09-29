@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from '../../database';
-import { PromptRecordsViewProvider } from '../../promptRecordsView';
+import { CreationWorkspaceViewProvider } from '../../creationWorkspaceView';
 import {
   formatOriginalSourceFileSize,
   parseImageAttachments,
@@ -317,7 +317,7 @@ suite('AI视频创作助手扩展', () => {
         pendingAddRecordCategoryId: undefined,
         pendingProjectDialog: undefined
       };
-      const view = new PromptRecordsViewProvider(database, formWorkflows, vscode.Uri.file(temporaryDirectory), submissions);
+      const view = new CreationWorkspaceViewProvider(database, formWorkflows, vscode.Uri.file(temporaryDirectory), submissions);
       const internalView = view as unknown as {
         panels: Map<string, typeof session>;
         saveAddedRecord: (message: unknown, targetSession: typeof session) => void;
@@ -1442,7 +1442,7 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(saveResultContribution);
     assert.deepStrictEqual(saveResultContribution.inputSchema.required, ['recordId']);
     assert.strictEqual(saveResultContribution.inputSchema.oneOf.length, 3);
-    const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'promptRecordsView.ts'), 'utf8');
+    const recordsViewSource = fs.readFileSync(path.join(extensionRoot, 'src', 'creationWorkspaceView.ts'), 'utf8');
     const recordsPageSource = recordsViewSource.slice(recordsViewSource.indexOf('function createPageHtml('));
     assert.ok(recordsPageSource.includes('<span class="project-column">所属项目</span>'));
     assert.ok(recordsPageSource.includes('<div class="table-header" role="row"><span>项目名称</span><span>项目简介</span><span>创建时间</span><span>操作</span></div>'));

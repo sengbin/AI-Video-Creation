@@ -12,7 +12,7 @@
 import * as vscode from 'vscode';
 import { PromptDatabase } from './database';
 import { formWorkflows } from './formWorkflows';
-import { PromptRecordsViewProvider } from './promptRecordsView';
+import { CreationWorkspaceViewProvider } from './creationWorkspaceView';
 import {
   GeneratedResultTool,
   SAVE_GENERATED_RESULT_TOOL_NAME,
@@ -29,7 +29,7 @@ export const PROMPT_RECORDS_VIEW_ID = 'aiVideoCreation.promptRecords';
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const database = await PromptDatabase.open(context.globalStorageUri);
   const submissions = new WorkflowSubmissionStore();
-  const recordsView = new PromptRecordsViewProvider(
+  const recordsView = new CreationWorkspaceViewProvider(
     database,
     formWorkflows,
     context.extensionUri,
