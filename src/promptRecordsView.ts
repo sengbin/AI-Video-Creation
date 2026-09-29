@@ -470,7 +470,9 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   }
 
   private recordTaskName(workflow: FormWorkflow, values: FormValues): string {
-    return workflow.toolName === SCREENPLAY_WORKFLOW_NAME ? '' : values.taskName;
+    return workflow.toolName === SCREENPLAY_WORKFLOW_NAME || workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME
+      ? ''
+      : values.taskName;
   }
 
   private assertUniqueContentTaskName(workflow: FormWorkflow, taskName: string, excludeRecordId?: string): void {
@@ -541,7 +543,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     );
     const recordValues = readFormValues(record.data);
     const initialValues: FormValues = { ...recordValues, projectId: record.projectId };
-    if (workflow.toolName === SCREENPLAY_WORKFLOW_NAME) {
+    if (workflow.toolName === SCREENPLAY_WORKFLOW_NAME || workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME) {
       delete initialValues.taskName;
     } else {
       initialValues.taskName = record.taskName;
@@ -790,12 +792,15 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
           session.categoryId,
           session.projectFilter === 'all' ? undefined : session.projectFilter
         )).map((record) => {
-        const sourceTaskId = record.categoryId === SCREENPLAY_WORKFLOW_NAME
-          ? readFormValues(record.data).sourceTaskId
+        const recordValues = readFormValues(record.data);
+        const linkedTaskId = record.categoryId === SCREENPLAY_WORKFLOW_NAME
+          ? recordValues.sourceTaskId
+          : record.categoryId === SHOOTING_SCRIPT_WORKFLOW_NAME
+          ? recordValues.screenplayTaskId
           : undefined;
         return {
           id: record.id,
-          taskName: sourceTaskId ? contentTaskNames.get(sourceTaskId) ?? record.taskName : record.taskName,
+          taskName: linkedTaskId ? contentTaskNames.get(linkedTaskId) ?? record.taskName : record.taskName,
           projectId: record.projectId,
           projectName: projectNames.get(record.projectId),
           createdAt: record.createdAt,
@@ -1555,6 +1560,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const screenplayWorkflowIds = ${JSON.stringify(workflows
       .filter((workflow) => workflow.toolName === SCREENPLAY_WORKFLOW_NAME)
       .map((workflow) => workflow.toolName))};
+    const contentTaskNameWorkflowIds = ${JSON.stringify(workflows
+      .filter((workflow) => workflow.toolName === SCREENPLAY_WORKFLOW_NAME || workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME)
+      .map((workflow) => workflow.toolName))};
     const workflowTitles = ${JSON.stringify(Object.fromEntries(workflows.map((workflow) => [workflow.toolName, workflow.title])))};
     const recordList = document.getElementById('record-list');
     const recordsTable = document.getElementById('records-table');
@@ -2290,7 +2298,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function renderState(state) {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
-      recordTitleHeading.textContent = screenplayWorkflowIds.includes(state.categoryId)
+      recordTitleHeading.textContent = contentTaskNameWorkflowIds.includes(state.categoryId)
         ? '所属内容任务名称'
         : '查看生成内容';
       const hasChapterContentColumns = chapterContentWorkflowIds.includes(state.categoryId);

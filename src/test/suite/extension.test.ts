@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { DatabaseSync } from 'node:sqlite';
 import { parse as parseYaml } from 'yaml';
 import { PromptDatabase, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES } from '../../database';
+import { PromptRecordsViewProvider } from '../../promptRecordsView';
 import {
   formatOriginalSourceFileSize,
   parseImageAttachments,
@@ -203,6 +204,8 @@ suite('AI视频创作助手扩展', () => {
     const workflow = formWorkflows.find((item) => item.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.strictEqual(workflow.requiresProject, true);
+    assert.ok(!workflow.fields.some((field) => field.name === 'taskName'));
+    assert.ok(!workflow.notice.includes('任务名称'));
     const screenplayField = workflow.fields.find((field) => field.name === 'screenplayTaskId');
     assert.strictEqual(screenplayField?.label, '关联剧本任务');
     assert.strictEqual(screenplayField?.placeholder, '请选择剧本创作任务');
@@ -213,13 +216,22 @@ suite('AI视频创作助手扩展', () => {
     const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
     const project = database.createWorkProject({ name: '当前项目', description: '' });
     const otherProject = database.createWorkProject({ name: '其他项目', description: '' });
+    const sourceContentTask = database.saveRecord({
+      taskName: '关联的内容任务',
+      categoryId: CREATIVE_WRITING_WORKFLOW_NAME,
+      categoryName: '创意写作',
+      projectId: project.id,
+      schema: [],
+      data: { taskName: '关联的内容任务' }
+    });
+    database.updateGeneratedContent(sourceContentTask.id, '创作内容正文');
     const screenplay = database.saveRecord({
-      taskName: '已完成剧本',
+      taskName: '',
       categoryId: SCREENPLAY_WORKFLOW_NAME,
       categoryName: '剧本创作',
       projectId: project.id,
       schema: [],
-      data: { taskName: '已完成剧本' }
+      data: { sourceTaskId: sourceContentTask.id }
     });
     database.updateGeneratedContent(screenplay.id, '剧本完整正文');
     const otherProjectScreenplay = database.saveRecord({
@@ -260,13 +272,13 @@ suite('AI视频创作助手扩展', () => {
     assert.ok(html.includes(`value="${screenplay.id}" data-project-id="${project.id}"`));
     assert.ok(html.includes(`value="${otherProjectScreenplay.id}" data-project-id="${otherProject.id}" hidden`));
     assert.ok(!html.includes(unrelatedTask.id));
+    assert.ok(!html.includes('name="taskName"'));
 
     const submissions = new WorkflowSubmissionStore();
     const tool = new WorkflowFormTool(workflow, database, submissions);
     const cancellationSource = new vscode.CancellationTokenSource();
     try {
       submissions.set(workflow.toolName, {
-        taskName: '拍摄脚本',
         screenplayTaskId: screenplay.id,
         aspectRatio: '9:16',
         visualStyle: '',
@@ -282,6 +294,71 @@ suite('AI视频创作助手扩展', () => {
         additionalInfo: '',
         scriptSource: '剧本完整正文'
       });
+
+      const postedMessages: unknown[] = [];
+      const panel = {
+        title: '',
+        webview: {
+          postMessage: (message: unknown) => {
+            postedMessages.push(message);
+            return Promise.resolve(true);
+          }
+        },
+        dispose: () => undefined
+      } as unknown as vscode.WebviewPanel;
+      const session = {
+        key: workflow.toolName,
+        panel,
+        subscriptions: [],
+        categoryId: workflow.toolName,
+        viewMode: 'records' as const,
+        projectFilter: project.id,
+        ready: true,
+        pendingAddRecordCategoryId: undefined,
+        pendingProjectDialog: undefined
+      };
+      const view = new PromptRecordsViewProvider(database, formWorkflows, vscode.Uri.file(temporaryDirectory), submissions);
+      const internalView = view as unknown as {
+        panels: Map<string, typeof session>;
+        saveAddedRecord: (message: unknown, targetSession: typeof session) => void;
+        editRecord: (recordId: string | undefined, targetSession: typeof session) => void;
+      };
+      internalView.panels.set(session.key, session);
+      try {
+        internalView.saveAddedRecord({
+          categoryId: workflow.toolName,
+          projectId: project.id,
+          values: {
+            screenplayTaskId: screenplay.id,
+            aspectRatio: '16:9',
+            visualStyle: '',
+            additionalInfo: ''
+          }
+        }, session);
+        const shootingRecord = database.listRecords(SHOOTING_SCRIPT_WORKFLOW_NAME)[0];
+        assert.ok(shootingRecord);
+        assert.strictEqual(shootingRecord.taskName, '');
+        assert.strictEqual((shootingRecord.data as Record<string, string>).taskName, undefined);
+        const states = postedMessages.filter((message): message is {
+          command: string;
+          records: Array<{ id: string; taskName: string }>;
+        } => typeof message === 'object' && message !== null && 'command' in message && message.command === 'state');
+        const latestState = states[states.length - 1];
+        assert.strictEqual(
+          latestState?.records.find((record) => record.id === shootingRecord.id)?.taskName,
+          '关联的内容任务'
+        );
+
+        internalView.editRecord(shootingRecord.id, session);
+        const editDialog = postedMessages.find((message): message is { command: string; formFields: string } =>
+          typeof message === 'object' && message !== null && 'command' in message &&
+          message.command === 'open-add-record-dialog'
+        );
+        assert.ok(editDialog);
+        assert.ok(!editDialog.formFields.includes('name="taskName"'));
+      } finally {
+        view.dispose();
+      }
     } finally {
       cancellationSource.dispose();
       database.dispose();
@@ -1172,7 +1249,7 @@ suite('AI视频创作助手扩展', () => {
         'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
-        'taskName', 'screenplayTaskId', 'aspectRatio', 'visualStyle', 'additionalInfo'
+        'screenplayTaskId', 'aspectRatio', 'visualStyle', 'additionalInfo'
       ]
     };
 

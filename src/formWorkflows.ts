@@ -322,9 +322,8 @@ export const formWorkflows: readonly FormWorkflow[] = [
     promptPath: 'copilot-customizations/prompts/shooting-script.prompt.md',
     resultType: 'content',
     requiresProject: true,
-    notice: '任务名称、所属项目和关联剧本任务为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。',
+    notice: '所属项目和关联剧本任务为必填项；其余空字段表示该项不需要收集，Copilot 不会追问。',
     fields: [
-      TASK_NAME_FIELD,
       { name: 'screenplayTaskId', label: '关联剧本任务', description: '选择当前项目中已生成剧本的剧本创作任务', placeholder: '请选择剧本创作任务', projectContentTask: true, projectTaskCategory: SCREENPLAY_WORKFLOW_NAME, required: true },
       { name: 'aspectRatio', label: '画幅比例', description: '选择目标视频画幅', options: ['16:9', '9:16', '1:1', '4:3', '2.39:1'] },
       { name: 'visualStyle', label: '画面风格', description: '选择常用风格，也可填写自定义内容', options: VISUAL_STYLE_OPTIONS, allowCustom: true },
