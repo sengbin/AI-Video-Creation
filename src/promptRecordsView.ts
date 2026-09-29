@@ -50,6 +50,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
   private readonly panels = new Map<string, RecordsPanelSession>();
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
+  private selectedProjectManagement = false;
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
   private readonly databaseSubscription: vscode.Disposable;
@@ -123,10 +124,19 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
           return;
         }
         this.selectedCategoryId = session.viewMode === 'records' ? session.categoryId : undefined;
+        this.selectedProjectManagement = session.viewMode === 'projects';
         this.postState();
       }),
       panel.onDidDispose(() => {
         if (this.panels.get(key) === session) this.panels.delete(key);
+        if (this.selectedCategoryId === session.categoryId) {
+          const activeSession = [...this.panels.values()].find((item) => item.panel.active);
+          this.selectedCategoryId = activeSession?.viewMode === 'records'
+            ? activeSession.categoryId
+            : undefined;
+          this.selectedProjectManagement = activeSession?.viewMode === 'projects';
+          this.postState();
+        }
         this.disposePanelSession(session);
       })
     );
@@ -169,6 +179,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('提示词分类标识无效。');
       }
       this.selectedCategoryId = message.categoryId;
+      this.selectedProjectManagement = false;
       const session = this.open(message.categoryId, 'records');
       this.postState(session);
       return;
@@ -176,6 +187,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     if (message.command === 'open-projects') {
       this.selectedCategoryId = undefined;
+      this.selectedProjectManagement = true;
       const session = this.open(undefined, 'projects');
       this.postState(session);
       return;
@@ -184,6 +196,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     if (message.command === 'add-record') {
       const workflow = this.findWorkflow(message.categoryId);
       this.selectedCategoryId = workflow.toolName;
+      this.selectedProjectManagement = false;
       const session = this.open(workflow.toolName, 'records');
       session.pendingAddRecordCategoryId = workflow.toolName;
       this.postState(session);
@@ -655,6 +668,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     session.viewMode = 'projects';
     session.categoryId = undefined;
     this.selectedCategoryId = undefined;
+    this.selectedProjectManagement = true;
     session.pendingProjectDialog = 'create';
     this.postState(session);
     this.openPendingProjectDialog(session);
@@ -748,7 +762,8 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       void this.categoryView.postMessage({
         command: 'categories',
         categories,
-        selectedCategoryId: this.selectedCategoryId
+        selectedCategoryId: this.selectedCategoryId,
+        selectedProjectManagement: this.selectedProjectManagement
       });
     }
 
@@ -995,6 +1010,8 @@ function createCategoryHtml(): string {
 
     function renderCategories(state) {
       categoryList.replaceChildren();
+      settingsItem.classList.toggle('is-selected', state.selectedProjectManagement);
+      openProjectsButton.setAttribute('aria-pressed', String(state.selectedProjectManagement));
       for (let index = 0; index < categoryStages.length; index++) {
         const stage = categoryStages[index];
         const section = document.createElement('section');
