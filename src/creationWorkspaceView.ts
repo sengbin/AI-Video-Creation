@@ -433,6 +433,13 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
     });
   }
 
+  private taskRecordDialogTitle(workflow: FormWorkflow, mode: 'add' | 'edit'): string {
+    if (UNIQUE_CONTENT_TASK_WORKFLOW_NAMES.some((workflowName) => workflowName === workflow.toolName)) {
+      return `${mode === 'add' ? '新建任务' : '修改任务'}-${workflow.title}`;
+    }
+    return `${mode === 'add' ? '添加' : '编辑'}${workflow.title}信息`;
+  }
+
   private openPendingAddRecordDialog(session: RecordsPanelSession): void {
     if (!session.ready || !session.pendingAddRecordCategoryId) {
       return;
@@ -442,7 +449,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
     void session.panel.webview.postMessage({
       command: 'open-add-record-dialog',
       categoryId: workflow.toolName,
-      title: `添加${workflow.title}信息`,
+      title: this.taskRecordDialogTitle(workflow, 'add'),
       formFields: renderAddRecordFields(workflow, this.database.listWorkProjects(), {}, this.listGeneratedContentTasks()),
       supportsImageAttachments: workflow.supportsImageAttachments === true
     });
@@ -554,7 +561,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
       mode: 'edit',
       recordId: record.id,
       categoryId: workflow.toolName,
-      title: `编辑${workflow.title}信息`,
+      title: this.taskRecordDialogTitle(workflow, 'edit'),
       formFields: renderAddRecordFields(editWorkflow, this.database.listWorkProjects(), initialValues, this.listGeneratedContentTasks()),
       supportsImageAttachments: workflow.supportsImageAttachments === true
     });
@@ -997,7 +1004,7 @@ function createCategoryHtml(): string {
     });
     const categoryStages = [
       {
-        title: '内容',
+        title: '任务',
         categoryIds: [
           'ai-video-creation-tools_collect_creative_writing_parameters',
           'ai-video-creation-tools_collect_image_inspired_writing_parameters',

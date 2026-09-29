@@ -366,6 +366,74 @@ suite('AI视频创作助手扩展', () => {
     }
   });
 
+  test('三个内容任务的新增和修改对话框标题使用任务命名', async () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-task-dialog-title-'));
+    const database = await PromptDatabase.open(vscode.Uri.file(path.join(temporaryDirectory, 'globalStorage')));
+    const project = database.createWorkProject({ name: '项目', description: '' });
+    const postedMessages: unknown[] = [];
+    const panel = {
+      title: '',
+      webview: {
+        postMessage: (message: unknown) => {
+          postedMessages.push(message);
+          return Promise.resolve(true);
+        }
+      },
+      dispose: () => undefined
+    } as unknown as vscode.WebviewPanel;
+    const session = {
+      key: 'task-dialog-titles',
+      panel,
+      subscriptions: [],
+      categoryId: undefined,
+      viewMode: 'records' as const,
+      projectFilter: 'all',
+      ready: true,
+      pendingAddRecordCategoryId: undefined as string | undefined,
+      pendingProjectDialog: undefined
+    };
+    const view = new CreationWorkspaceViewProvider(
+      database,
+      formWorkflows,
+      vscode.Uri.file(temporaryDirectory),
+      new WorkflowSubmissionStore()
+    );
+    const internalView = view as unknown as {
+      openPendingAddRecordDialog: (targetSession: typeof session) => void;
+      editRecord: (recordId: string | undefined, targetSession: typeof session) => void;
+    };
+    try {
+      for (const workflowName of UNIQUE_CONTENT_TASK_WORKFLOW_NAMES) {
+        const workflow = formWorkflows.find((item) => item.toolName === workflowName);
+        assert.ok(workflow);
+        const taskTitle = `任务-${workflow.title}`;
+
+        session.pendingAddRecordCategoryId = workflow.toolName;
+        internalView.openPendingAddRecordDialog(session);
+        const addMessage = postedMessages[postedMessages.length - 1] as { command: string; title: string };
+        assert.strictEqual(addMessage.command, 'open-add-record-dialog');
+        assert.strictEqual(addMessage.title, `新建任务-${workflow.title}`);
+
+        const record = database.saveRecord({
+          taskName: taskTitle,
+          categoryId: workflow.toolName,
+          categoryName: workflow.title,
+          projectId: project.id,
+          schema: workflow.fields,
+          data: { taskName: taskTitle }
+        });
+        internalView.editRecord(record.id, session);
+        const editMessage = postedMessages[postedMessages.length - 1] as { command: string; title: string };
+        assert.strictEqual(editMessage.command, 'open-add-record-dialog');
+        assert.strictEqual(editMessage.title, `修改任务-${workflow.title}`);
+      }
+    } finally {
+      view.dispose();
+      database.dispose();
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('列表添加对话框渲染任务字段并复用工作流校验', () => {
     const workflow = formWorkflows.find((item) => item.toolName === CREATIVE_WRITING_WORKFLOW_NAME);
     const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
