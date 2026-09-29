@@ -853,6 +853,7 @@ function createCategoryHtml(): string {
       border: 0; border-radius: 6px; box-shadow: var(--card-shadow);
     }
     .config-card { background: var(--config-background); border: 0; box-shadow: none; }
+    #category-list { display: grid; gap: 10px; }
     h2 {
       display: flex; align-items: center; gap: 8px;
       margin: 0 0 8px; padding: 2px 0; color: var(--vscode-foreground); font-size: 12px; font-weight: 600;
@@ -862,11 +863,6 @@ function createCategoryHtml(): string {
       background: var(--vscode-focusBorder); border-radius: 2px; content: "";
     }
     nav { display: grid; gap: 0; }
-    .category-stage + .category-stage { margin-top: 10px; }
-    .stage-title {
-      margin: 0 0 4px; padding: 0 0 6px 11px; border-bottom: 1px solid var(--divider);
-      color: var(--vscode-descriptionForeground); font-size: 12px; font-weight: 600;
-    }
     .category-item {
       position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0 0 0 2px;
       background: transparent; border: 0; border-radius: 4px;
@@ -884,15 +880,10 @@ function createCategoryHtml(): string {
 </head>
 <body>
   <main>
-    <section class="card">
-      <div class="card-inner">
-        <h2>任务</h2>
-        <nav id="category-list" aria-label="任务"></nav>
-      </div>
-    </section>
+    <div id="category-list"></div>
     <section class="card">
       <div class="card-inner config-card">
-        <h2>设置</h2>
+        <h2>管理</h2>
         <nav aria-label="设置">
           <div class="category-item">
             <button id="open-projects" class="select" type="button">项目管理</button>
@@ -958,7 +949,7 @@ function createCategoryHtml(): string {
     });
     const categoryStages = [
       {
-        title: '阶段一 · 内容创作',
+        title: '内容创作',
         categoryIds: [
           'ai-video-creation-tools_collect_creative_writing_parameters',
           'ai-video-creation-tools_collect_image_inspired_writing_parameters',
@@ -966,7 +957,7 @@ function createCategoryHtml(): string {
         ]
       },
       {
-        title: '阶段二 · 视觉资产创作',
+        title: '资产',
         categoryIds: [
           'ai-video-creation-tools_collect_character_parameters',
           'ai-video-creation-tools_collect_scene_parameters',
@@ -975,7 +966,7 @@ function createCategoryHtml(): string {
         ]
       },
       {
-        title: '阶段三 · 剧本与拍摄',
+        title: '拍摄',
         categoryIds: [
           'ai-video-creation-tools_collect_screenplay_parameters',
           'ai-video-creation-tools_collect_shooting_script_parameters'
@@ -996,13 +987,20 @@ function createCategoryHtml(): string {
 
     function renderCategories(state) {
       categoryList.replaceChildren();
-      for (const stage of categoryStages) {
+      for (let index = 0; index < categoryStages.length; index++) {
+        const stage = categoryStages[index];
         const section = document.createElement('section');
-        section.className = 'category-stage';
-        const heading = document.createElement('h3');
-        heading.className = 'stage-title';
+        section.className = 'card category-stage';
+        const cardInner = document.createElement('div');
+        cardInner.className = 'card-inner';
+        const heading = document.createElement('h2');
+        heading.id = 'category-heading-' + index;
         heading.textContent = stage.title;
-        section.append(heading);
+        section.setAttribute('aria-labelledby', heading.id);
+        const categoryItems = document.createElement('nav');
+        categoryItems.setAttribute('aria-label', stage.title);
+        cardInner.append(heading, categoryItems);
+        section.append(cardInner);
 
         for (const categoryId of stage.categoryIds) {
           const category = state.categories.find((item) => item.id === categoryId);
@@ -1021,7 +1019,7 @@ function createCategoryHtml(): string {
           });
           bindPressedState(add, item, false);
           item.append(select, add);
-          section.append(item);
+          categoryItems.append(item);
         }
 
         categoryList.append(section);
