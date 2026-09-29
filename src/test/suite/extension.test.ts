@@ -35,6 +35,8 @@ suite('AI视频创作助手扩展', () => {
     const workflow = formWorkflows.find((item) => item.toolName === SCREENPLAY_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.strictEqual(workflow.requiresProject, true);
+    assert.ok(!workflow.fields.some((field) => field.name === 'taskName'));
+    assert.ok(!workflow.notice.includes('任务名称'));
     assert.ok(!workflow.fields.some((field) => field.name === 'format'));
     assert.ok(workflow.fields.some((field) => field.name === 'maxEpisodeDurationSeconds' && field.required));
     assert.ok(!workflow.fields.some((field) => field.name === 'episodeDurationSeconds'));
@@ -86,9 +88,41 @@ suite('AI视频创作助手扩展', () => {
       const tasks = database.listGeneratedContentTasks([CREATIVE_WRITING_WORKFLOW_NAME], []);
       assert.deepStrictEqual(tasks.map((item) => item.id), [task.id]);
       const html = renderAddRecordFields(workflow, [project], {}, tasks);
+      assert.ok(!html.includes('name="taskName"'));
       assert.ok(!html.includes('未归属项目'));
       assert.ok(html.includes('name="projectId" required'));
       assert.ok(html.includes(`value="${task.id}" data-project-id="${project.id}"`));
+
+      const screenplay = database.saveRecord({
+        taskName: '不应保存的名称快照',
+        categoryId: SCREENPLAY_WORKFLOW_NAME,
+        categoryName: '剧本创作',
+        projectId: project.id,
+        schema: [{ name: 'sourceTaskId' }],
+        data: { sourceTaskId: task.id }
+      });
+      database.updateGeneratedContent(screenplay.id, '生成的剧本正文');
+      const storedDatabase = new DatabaseSync(path.join(temporaryDirectory, 'globalStorage', 'creative-projects.sqlite'));
+      try {
+        const storedTaskName = storedDatabase.prepare(
+          'SELECT task_name FROM prompt_records WHERE id = ?'
+        ).get(screenplay.id) as { task_name: string };
+        assert.strictEqual(storedTaskName.task_name, '');
+      } finally {
+        storedDatabase.close();
+      }
+
+      database.updateRecord(task.id, {
+        taskName: '改名后的故事创意',
+        projectId: project.id,
+        schema: [{ name: 'taskName' }],
+        data: { taskName: '改名后的故事创意' }
+      });
+      assert.strictEqual(database.getRecord(screenplay.id)?.taskName, '改名后的故事创意');
+      assert.strictEqual(
+        database.listGeneratedContentTasks([SCREENPLAY_WORKFLOW_NAME], []).find((item) => item.id === screenplay.id)?.taskName,
+        '改名后的故事创意'
+      );
     } finally {
       database.dispose();
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -1116,7 +1150,7 @@ suite('AI视频创作助手扩展', () => {
         'taskName', 'source', 'appearance', 'motion', 'environmentInteraction', 'composition', 'style', 'background', 'aspectRatio', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_screenplay_parameters': [
-        'taskName', 'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'additionalInfo'
+        'sourceTaskId', 'maxEpisodeDurationSeconds', 'maxEpisodes', 'additionalInfo'
       ],
       'ai-video-creation-tools_collect_shooting_script_parameters': [
         'taskName', 'screenplayTaskId', 'aspectRatio', 'visualStyle', 'additionalInfo'

@@ -469,6 +469,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
     }
   }
 
+  private recordTaskName(workflow: FormWorkflow, values: FormValues): string {
+    return workflow.toolName === SCREENPLAY_WORKFLOW_NAME ? '' : values.taskName;
+  }
+
   private assertUniqueContentTaskName(workflow: FormWorkflow, taskName: string, excludeRecordId?: string): void {
     if (UNIQUE_CONTENT_TASK_WORKFLOW_NAMES.some((categoryId) => categoryId === workflow.toolName)) {
       this.database.assertTaskNameUnique(taskName, UNIQUE_CONTENT_TASK_WORKFLOW_NAMES, excludeRecordId);
@@ -488,9 +492,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('表单数据无效，请检查后重新提交。');
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
-      this.assertUniqueContentTaskName(workflow, values.taskName);
+      const taskName = this.recordTaskName(workflow, values);
+      this.assertUniqueContentTaskName(workflow, taskName);
       this.database.saveRecord({
-        taskName: values.taskName,
+        taskName,
         categoryId: workflow.toolName,
         categoryName: workflow.title,
         projectId: message.projectId,
@@ -524,7 +529,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const workflow = this.findWorkflow(record.categoryId);
     const savedFields = readFormFields(record.schema);
-    const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME
+    const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME || workflow.toolName === SCREENPLAY_WORKFLOW_NAME
       ? workflow.fields
       : savedFields.some((field) => field.name === 'taskName')
       ? savedFields
@@ -535,11 +540,12 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         : field
     );
     const recordValues = readFormValues(record.data);
-    const initialValues = {
-      ...recordValues,
-      taskName: record.taskName,
-      projectId: record.projectId
-    };
+    const initialValues: FormValues = { ...recordValues, projectId: record.projectId };
+    if (workflow.toolName === SCREENPLAY_WORKFLOW_NAME) {
+      delete initialValues.taskName;
+    } else {
+      initialValues.taskName = record.taskName;
+    }
     const editWorkflow: FormWorkflow = { ...workflow, fields: editableFields };
     void session.panel.webview.postMessage({
       command: 'open-add-record-dialog',
@@ -563,7 +569,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
       }
       const workflow = this.findWorkflow(record.categoryId);
       const savedFields = readFormFields(record.schema);
-      const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME
+      const fields = workflow.toolName === SHOOTING_SCRIPT_WORKFLOW_NAME || workflow.toolName === SCREENPLAY_WORKFLOW_NAME
         ? workflow.fields
         : savedFields.some((field) => field.name === 'taskName')
         ? savedFields
@@ -581,9 +587,10 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         throw new Error('表单数据无效，请检查后重新提交。');
       }
       this.assertProjectContentTask(workflow, values, message.projectId);
-      this.assertUniqueContentTaskName(workflow, values.taskName, record.id);
+      const taskName = this.recordTaskName(workflow, values);
+      this.assertUniqueContentTaskName(workflow, taskName, record.id);
       const updatedRecord = this.database.updateRecord(record.id, {
-        taskName: values.taskName,
+        taskName,
         projectId: message.projectId,
         schema: editableFields,
         data: values
@@ -769,6 +776,7 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
 
     const projects = this.database.listWorkProjects();
     const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+    const contentTaskNames = new Map(this.listGeneratedContentTasks().map((task) => [task.id, task.taskName]));
     const sessions = targetSession ? [targetSession] : this.panels.values();
     for (const session of sessions) {
       const selectedCategory = this.workflows.find((workflow) => workflow.toolName === session.categoryId);
@@ -781,14 +789,19 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
         : this.database.listRecords(
           session.categoryId,
           session.projectFilter === 'all' ? undefined : session.projectFilter
-        )).map((record) => ({
-        id: record.id,
-        taskName: record.taskName,
-        projectId: record.projectId,
-        projectName: projectNames.get(record.projectId),
-        createdAt: record.createdAt,
-        generatedAt: record.generatedAt
-      }));
+        )).map((record) => {
+        const sourceTaskId = record.categoryId === SCREENPLAY_WORKFLOW_NAME
+          ? readFormValues(record.data).sourceTaskId
+          : undefined;
+        return {
+          id: record.id,
+          taskName: sourceTaskId ? contentTaskNames.get(sourceTaskId) ?? record.taskName : record.taskName,
+          projectId: record.projectId,
+          projectName: projectNames.get(record.projectId),
+          createdAt: record.createdAt,
+          generatedAt: record.generatedAt
+        };
+      });
 
       void session.panel.webview.postMessage({
         command: 'state',
@@ -1366,7 +1379,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
       </div>
       <div class="records-table-scroll">
         <div id="records-table" class="table" role="table">
-          <div class="table-header" role="row"><span>查看生成内容</span><span class="project-column">所属项目</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="chapter-content-action-column">操作</span><span class="row-action-column">操作</span></div>
+          <div class="table-header" role="row"><span class="record-title-heading">查看生成内容</span><span class="project-column">所属项目</span><span>添加时间</span><span class="generated-time-column">生成时间</span><span class="chapter-content-action-column">操作</span><span class="row-action-column">操作</span></div>
           <div id="record-list" role="rowgroup"></div>
         </div>
         <div id="empty-state" class="empty" role="status" hidden>暂无保存的数据</div>
@@ -1545,6 +1558,7 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     const workflowTitles = ${JSON.stringify(Object.fromEntries(workflows.map((workflow) => [workflow.toolName, workflow.title])))};
     const recordList = document.getElementById('record-list');
     const recordsTable = document.getElementById('records-table');
+    const recordTitleHeading = recordsTable.querySelector('.record-title-heading');
     const emptyState = document.getElementById('empty-state');
     const projectList = document.getElementById('project-list');
     const recordsSection = document.getElementById('records-section');
@@ -2276,6 +2290,9 @@ function createPageHtml(workflows: readonly FormWorkflow[]): string {
     function renderState(state) {
       selectedCategoryId = state.categoryId;
       currentViewMode = state.viewMode;
+      recordTitleHeading.textContent = screenplayWorkflowIds.includes(state.categoryId)
+        ? '所属内容任务名称'
+        : '查看生成内容';
       const hasChapterContentColumns = chapterContentWorkflowIds.includes(state.categoryId);
       recordsTable.classList.toggle('has-chapter-content-columns', hasChapterContentColumns);
       recordsTable.classList.toggle('has-project-columns', state.categoryId !== undefined);

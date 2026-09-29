@@ -157,7 +157,7 @@ export class PromptDatabase implements vscode.Disposable {
     this.assertWorkProjectExists(projectId);
     const record = {
       ...input,
-      taskName: input.taskName.trim(),
+      taskName: getSourceTaskId(input.data) ? '' : input.taskName.trim(),
       projectId,
       id: randomUUID(),
       createdAt: new Date().toISOString()
@@ -184,13 +184,11 @@ export class PromptDatabase implements vscode.Disposable {
     });
 
     this.recordsChangedEmitter.fire();
-    return {
-      ...record,
-      generatedResultChinese: undefined,
-      generatedResultEnglish: undefined,
-      generatedResultContent: undefined,
-      generatedAt: undefined
-    };
+    const savedRecord = this.getRecord(record.id);
+    if (!savedRecord) {
+      throw new Error('保存记录后无法读取记录数据。');
+    }
+    return savedRecord;
   }
 
   /**
@@ -214,7 +212,7 @@ export class PromptDatabase implements vscode.Disposable {
       SELECT * FROM prompt_records ${where} ORDER BY created_at DESC, id DESC
     `).all(...parameters);
 
-    return (rows as unknown as StoredPromptRecord[]).map(readRecord);
+    return (rows as unknown as StoredPromptRecord[]).map((row) => this.readRecord(row));
   }
 
   /** 查询指定内容类工作流中已有生成结果的任务。 */
@@ -236,13 +234,15 @@ export class PromptDatabase implements vscode.Disposable {
     }
     conditions[1] += ')';
     const rows = this.connection.prepare(`
-      SELECT id, task_name, category_id, project_id FROM prompt_records
+      SELECT id, task_name, category_id, project_id, data_json FROM prompt_records
       WHERE ${conditions.join(' AND ')} AND project_id <> '0'
       ORDER BY created_at DESC, id DESC
-    `).all(...parameters) as { id: string; task_name: string; category_id: string; project_id: string }[];
+    `).all(...parameters) as {
+      id: string; task_name: string; category_id: string; project_id: string; data_json: string;
+    }[];
     return rows.map((row) => ({
       id: row.id,
-      taskName: row.task_name,
+      taskName: this.resolveTaskName(row.id, row.task_name, row.data_json),
       categoryId: row.category_id,
       projectId: row.project_id
     }));
@@ -257,7 +257,40 @@ export class PromptDatabase implements vscode.Disposable {
       SELECT * FROM prompt_records WHERE id = ?
     `).get(id) as StoredPromptRecord | undefined;
 
-    return row ? readRecord(row) : undefined;
+    return row ? this.readRecord(row) : undefined;
+  }
+
+  private readRecord(row: StoredPromptRecord): PromptRecord {
+    return {
+      ...readRecord(row),
+      taskName: this.resolveTaskName(row.id, row.task_name, row.data_json)
+    };
+  }
+
+  private resolveTaskName(
+    recordId: string,
+    taskName: string,
+    dataJson: string,
+    visited = new Set<string>()
+  ): string {
+    if (visited.has(recordId)) {
+      return taskName;
+    }
+    visited.add(recordId);
+    const data = JSON.parse(dataJson) as unknown;
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      return taskName;
+    }
+    const sourceTaskId = (data as Record<string, unknown>).sourceTaskId;
+    if (typeof sourceTaskId !== 'string') {
+      return taskName;
+    }
+    const sourceTask = this.connection.prepare(`
+      SELECT id, task_name, data_json FROM prompt_records WHERE id = ?
+    `).get(sourceTaskId) as { id: string; task_name: string; data_json: string } | undefined;
+    return sourceTask
+      ? this.resolveTaskName(sourceTask.id, sourceTask.task_name, sourceTask.data_json, visited)
+      : taskName;
   }
 
   /**
@@ -604,6 +637,14 @@ function serializeJson(value: unknown, fieldName: string): string {
   }
 
   return json;
+}
+
+function getSourceTaskId(data: unknown): string | undefined {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return undefined;
+  }
+  const sourceTaskId = (data as Record<string, unknown>).sourceTaskId;
+  return typeof sourceTaskId === 'string' ? sourceTaskId : undefined;
 }
 
 function readRecord(row: StoredPromptRecord): PromptRecord {

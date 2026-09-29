@@ -308,12 +308,8 @@ export const formWorkflows: readonly FormWorkflow[] = [
     promptPath: 'copilot-customizations/prompts/screenplay.prompt.md',
     resultType: 'content',
     requiresProject: true,
-    notice: '任务名称、所属项目、关联内容创作任务、单集最大时长和最大总集数为必填项；单集最大时长是上限，剧本时长将按内容决定。',
+    notice: '所属项目、关联内容创作任务、单集最大时长和最大总集数为必填项；单集最大时长是上限，剧本时长将按内容决定。',
     fields: [
-      {
-        ...TASK_NAME_FIELD,
-        description: '必填，用于在任务列表中识别这项剧本创作任务',
-      },
       { name: 'sourceTaskId', label: '关联内容创作任务', description: '选择当前项目中已有生成内容的任务，生成内容将作为剧本创作素材', placeholder: '请选择创作任务', projectContentTask: true, required: true },
       { name: 'maxEpisodeDurationSeconds', label: '单集最大时长（秒）', description: '填写每集时长上限；Copilot 将按内容分析合理时长，不会为达到上限而扩写', placeholder: '例如：60', inputType: 'number', min: 1, required: true },
       { name: 'maxEpisodes', label: '最大总集数', description: '填写集数上限；短片或电影填写1', placeholder: '例如：1', inputType: 'number', min: 1, max: MAX_GENERATED_CHAPTERS, required: true },
