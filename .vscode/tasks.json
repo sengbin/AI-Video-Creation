@@ -6,7 +6,10 @@
       "script": "compile",
       "path": ".",
       "problemMatcher": "$tsc",
-      "label": "compile AI Video Creation Extension"
+      "label": "compile AI Video Creation Extension",
+      "presentation": {
+        "close": true
+      }
     },
     {
       "type": "npm",
