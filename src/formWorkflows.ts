@@ -67,6 +67,10 @@ export const TASK_NAME_FIELD: FormField = {
   required: true
 };
 
+function taskNameFieldFor(label: string): FormField {
+  return { ...TASK_NAME_FIELD, label, placeholder: `输入${label}` };
+}
+
 const VISUAL_STYLE_OPTIONS = [
   '写实电影风格',
   '写实摄影',
@@ -229,9 +233,9 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '角色生成',
     promptPath: 'copilot-customizations/prompts/character-generation.prompt.md',
     resultType: 'prompt',
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
+    notice: '角色名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
-      TASK_NAME_FIELD,
+      taskNameFieldFor('角色名称'),
       { name: 'characterType', label: '角色类型', description: '选择需要生成的角色类别', options: ['人类', '动物', '怪物', '丧尸', '其他'] },
       { name: 'appearance', label: '角色外观', description: '描述年龄、性别、面部、体型、毛发及辨识特征等', placeholder: '例如：成年女性，短黑发，肩背宽阔，左眉有一道疤' },
       { name: 'clothing', label: '装束', description: '描述服装、饰物、护具或身体附属物', placeholder: '例如：破损皮夹克，颈戴旧铜项圈' },
@@ -248,9 +252,9 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '场景生成',
     promptPath: 'copilot-customizations/prompts/scene-generation.prompt.md',
     resultType: 'prompt',
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
+    notice: '场景名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
-      TASK_NAME_FIELD,
+      taskNameFieldFor('场景名称'),
       { name: 'placeType', label: '地点类型', description: '例如室内、街道、森林或特殊空间', placeholder: '例如：临河的旧仓库室内' },
       { name: 'layout', label: '空间布局', description: '描述空间分区和区域关系', placeholder: '例如：入口在南侧，中央为空地，北墙有一排货架' },
       { name: 'environment', label: '环境与光线', description: '填写时间、天气、光源或环境氛围', placeholder: '例如：凌晨大雨，头顶冷白灯，空间潮湿空旷' },
@@ -266,9 +270,9 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '道具生成',
     promptPath: 'copilot-customizations/prompts/prop-generation.prompt.md',
     resultType: 'prompt',
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
+    notice: '道具名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
-      TASK_NAME_FIELD,
+      taskNameFieldFor('道具名称'),
       { name: 'propName', label: '道具名称', description: '填写道具名称', placeholder: '例如：刻有编号的旧铜钥匙' },
       { name: 'appearance', label: '外观特征', description: '描述尺寸、结构、材质、颜色及可见细节', placeholder: '例如：掌心大小的旧铜钥匙，细长齿纹，柄部刻有编号' },
       { name: 'state', label: '当前状态', description: '描述道具完整、破损、开启或使用中的状态', placeholder: '例如：整体完整，表面有磨损和泥渍' },
@@ -284,9 +288,9 @@ export const formWorkflows: readonly FormWorkflow[] = [
     title: '特效生成',
     promptPath: 'copilot-customizations/prompts/effect-generation.prompt.md',
     resultType: 'prompt',
-    notice: '任务名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
+    notice: '特效名称为必填项；其余空字段表示该项不需要收集，Copilot 不会追问，将根据已填写内容继续。',
     fields: [
-      TASK_NAME_FIELD,
+      taskNameFieldFor('特效名称'),
       { name: 'source', label: '特效来源', description: '说明特效来自何处', placeholder: '例如：角色手中的古老护符' },
       { name: 'appearance', label: '视觉表现', description: '描述形态、位置、颜色、亮度和影响范围', placeholder: '例如：护符周围浮现青蓝色光环，照亮半径两米范围' },
       { name: 'motion', label: '触发与变化', description: '描述触发条件、运动过程和持续时间', placeholder: '例如：接触雨水后粒子盘旋上升，约3秒后消散' },

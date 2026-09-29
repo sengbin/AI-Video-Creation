@@ -260,7 +260,7 @@ suite('AI视频创作助手扩展', () => {
     const imageWorkflow = formWorkflows.find((item) => item.toolName === IMAGE_INSPIRED_WRITING_WORKFLOW_NAME);
     assert.ok(workflow);
     assert.ok(imageWorkflow);
-    assert.ok(formWorkflows.every((item) =>
+    assert.ok([workflow, imageWorkflow].every((item) =>
       item.fields.some((field) => field.name === 'taskName' && field.label === '任务名称')
     ));
 
@@ -1002,6 +1002,18 @@ suite('AI视频创作助手扩展', () => {
       'ai-video-creation-tools_collect_shooting_script_parameters'
     ];
     assert.deepStrictEqual(formWorkflows.map((workflow) => workflow.toolName), expectedWorkflowOrder);
+    const assetTaskNameFields = formWorkflows
+      .filter((workflow) => [
+        'ai-video-creation-tools_collect_character_parameters',
+        'ai-video-creation-tools_collect_scene_parameters',
+        'ai-video-creation-tools_collect_prop_parameters',
+        'ai-video-creation-tools_collect_effect_parameters'
+      ].includes(workflow.toolName))
+      .map((workflow) => workflow.fields.find((field) => field.name === 'taskName'));
+    assert.deepStrictEqual(
+      assetTaskNameFields.map((field) => field?.label),
+      ['角色名称', '场景名称', '道具名称', '特效名称']
+    );
     assert.deepStrictEqual(
       formWorkflows.filter((workflow) => workflow.resultType === 'content').map((workflow) => workflow.title),
       ['创意写作', '图片灵感写作', '小说重创作', '剧本创作', '拍摄脚本制作']
