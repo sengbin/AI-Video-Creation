@@ -118,6 +118,13 @@ export class PromptRecordsViewProvider implements vscode.WebviewViewProvider, vs
           void vscode.window.showErrorMessage(errorMessage(error));
         });
       }),
+      panel.onDidChangeViewState((event) => {
+        if (!event.webviewPanel.active) {
+          return;
+        }
+        this.selectedCategoryId = session.viewMode === 'records' ? session.categoryId : undefined;
+        this.postState();
+      }),
       panel.onDidDispose(() => {
         if (this.panels.get(key) === session) this.panels.delete(key);
         this.disposePanelSession(session);
@@ -868,7 +875,8 @@ function createCategoryHtml(): string {
       background: transparent; border: 0; border-radius: 4px;
     }
     .category-item + .category-item { margin-top: 4px; }
-    .category-item:hover { background: var(--menu-hover-background); }
+    .category-item:hover,
+    .category-item.is-selected { background: var(--menu-hover-background); }
     .category-item.is-pressed { background: var(--menu-pressed-background); }
     button { min-width: 0; min-height: 32px; border: 0; border-radius: 3px; color: inherit; font: inherit; cursor: pointer; }
     .select { display: block; width: 100%; max-width: 100%; padding: 4px 6px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; }
@@ -1009,10 +1017,12 @@ function createCategoryHtml(): string {
           }
 
           const item = document.createElement('div');
-          item.className = 'category-item';
+          const isSelected = state.selectedCategoryId === category.id;
+          item.className = isSelected ? 'category-item is-selected' : 'category-item';
           const select = makeButton(category.title, 'select', category.title, () => {
             vscode.postMessage({ command: 'select-category', categoryId: category.id });
           });
+          select.setAttribute('aria-pressed', String(isSelected));
           bindPressedState(select, item, true);
           const add = makeButton('添加', 'add', '添加' + category.title + '记录', () => {
             vscode.postMessage({ command: 'add-record', categoryId: category.id });
