@@ -50,7 +50,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
   private readonly panels = new Map<string, RecordsPanelSession>();
   private categoryView: vscode.Webview | undefined;
   private selectedCategoryId: string | undefined;
-  private selectedProjectManagement = false;
+  private selectedProjectCard = false;
   private categoryMessageSubscription: vscode.Disposable | undefined;
   private visibilitySubscription: vscode.Disposable | undefined;
   private readonly databaseSubscription: vscode.Disposable;
@@ -124,7 +124,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
           return;
         }
         this.selectedCategoryId = session.viewMode === 'records' ? session.categoryId : undefined;
-        this.selectedProjectManagement = session.viewMode === 'projects';
+        this.selectedProjectCard = session.viewMode === 'projects';
         this.postState();
       }),
       panel.onDidDispose(() => {
@@ -134,7 +134,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
           this.selectedCategoryId = activeSession?.viewMode === 'records'
             ? activeSession.categoryId
             : undefined;
-          this.selectedProjectManagement = activeSession?.viewMode === 'projects';
+          this.selectedProjectCard = activeSession?.viewMode === 'projects';
           this.postState();
         }
         this.disposePanelSession(session);
@@ -179,15 +179,15 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
         throw new Error('提示词分类标识无效。');
       }
       this.selectedCategoryId = message.categoryId;
-      this.selectedProjectManagement = false;
+      this.selectedProjectCard = false;
       const session = this.open(message.categoryId, 'records');
       this.postState(session);
       return;
     }
 
-    if (message.command === 'open-projects') {
+    if (message.command === 'open-project-management') {
       this.selectedCategoryId = undefined;
-      this.selectedProjectManagement = true;
+      this.selectedProjectCard = true;
       const session = this.open(undefined, 'projects');
       this.postState(session);
       return;
@@ -196,7 +196,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
     if (message.command === 'add-record') {
       const workflow = this.findWorkflow(message.categoryId);
       this.selectedCategoryId = workflow.toolName;
-      this.selectedProjectManagement = false;
+      this.selectedProjectCard = false;
       const session = this.open(workflow.toolName, 'records');
       session.pendingAddRecordCategoryId = workflow.toolName;
       this.postState(session);
@@ -677,7 +677,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
     session.viewMode = 'projects';
     session.categoryId = undefined;
     this.selectedCategoryId = undefined;
-    this.selectedProjectManagement = true;
+    this.selectedProjectCard = true;
     session.pendingProjectDialog = 'create';
     this.postState(session);
     this.openPendingProjectDialog(session);
@@ -772,7 +772,7 @@ export class CreationWorkspaceViewProvider implements vscode.WebviewViewProvider
         command: 'categories',
         categories,
         selectedCategoryId: this.selectedCategoryId,
-        selectedProjectManagement: this.selectedProjectManagement
+        selectedProjectCard: this.selectedProjectCard
       });
     }
 
@@ -892,7 +892,7 @@ function createCategoryHtml(): string {
       min-width: 0; padding: 8px; background: var(--card-background);
       border: 0; border-radius: 6px; box-shadow: var(--card-shadow);
     }
-    .config-card { background: var(--config-background); border: 0; box-shadow: none; }
+    .project-card, .configuration-card { background: var(--config-background); border: 0; box-shadow: none; }
     #category-list { display: grid; gap: 10px; }
     h2 {
       display: flex; align-items: center; gap: 8px;
@@ -921,20 +921,27 @@ function createCategoryHtml(): string {
 </head>
 <body>
   <main>
-    <div id="category-list"></div>
     <section class="card">
-      <div class="card-inner config-card">
+      <div class="card-inner project-card">
         <h2>项目</h2>
-        <nav aria-label="设置">
-          <div class="category-item">
-            <button id="open-projects" class="select" type="button">项目管理</button>
+        <nav aria-label="项目">
+          <div id="project-management-item" class="category-item">
+            <button id="open-project-management" class="select" type="button">项目管理</button>
             <button id="create-project" class="add" type="button">创建</button>
           </div>
-          <div class="category-item">
+        </nav>
+      </div>
+    </section>
+    <div id="category-list"></div>
+    <section class="card">
+      <div class="card-inner configuration-card">
+        <h2>配置</h2>
+        <nav aria-label="配置">
+          <div id="model-config-item" class="category-item">
             <button id="open-model-config" class="select" type="button">模型配置（预览）</button>
             <button id="add-model-config" class="add" type="button">添加</button>
           </div>
-          <div class="category-item">
+          <div id="database-backup-item" class="category-item">
             <button id="open-database-backup" class="select" type="button">数据库备份（预览）</button>
           </div>
         </nav>
@@ -959,16 +966,16 @@ function createCategoryHtml(): string {
       button.addEventListener('pointercancel', clearPressed);
       button.addEventListener('lostpointercapture', clearPressed);
     }
-    const settingsItem = document.querySelector('.config-card .category-item');
-    const openProjectsButton = document.getElementById('open-projects');
+    const projectManagementItem = document.getElementById('project-management-item');
+    const openProjectManagementButton = document.getElementById('open-project-management');
     const createProjectButton = document.getElementById('create-project');
-    const modelConfigItem = document.querySelectorAll('.config-card .category-item')[1];
+    const modelConfigItem = document.getElementById('model-config-item');
     const openModelConfigButton = document.getElementById('open-model-config');
     const addModelConfigButton = document.getElementById('add-model-config');
-    const databaseBackupItem = document.querySelectorAll('.config-card .category-item')[2];
+    const databaseBackupItem = document.getElementById('database-backup-item');
     const openDatabaseBackupButton = document.getElementById('open-database-backup');
-    if (!(settingsItem instanceof HTMLElement) ||
-        !(openProjectsButton instanceof HTMLButtonElement) ||
+    if (!(projectManagementItem instanceof HTMLElement) ||
+      !(openProjectManagementButton instanceof HTMLButtonElement) ||
         !(createProjectButton instanceof HTMLButtonElement) ||
         !(modelConfigItem instanceof HTMLElement) ||
         !(openModelConfigButton instanceof HTMLButtonElement) ||
@@ -977,13 +984,13 @@ function createCategoryHtml(): string {
       !(openDatabaseBackupButton instanceof HTMLButtonElement)) {
       throw new Error('设置菜单项缺失。');
     }
-    bindPressedState(openProjectsButton, settingsItem, true);
-    bindPressedState(createProjectButton, settingsItem, false);
+    bindPressedState(openProjectManagementButton, projectManagementItem, true);
+    bindPressedState(createProjectButton, projectManagementItem, false);
     bindPressedState(openModelConfigButton, modelConfigItem, true);
     bindPressedState(addModelConfigButton, modelConfigItem, false);
     bindPressedState(openDatabaseBackupButton, databaseBackupItem, true);
-    document.getElementById('open-projects').addEventListener('click', () => {
-      vscode.postMessage({ command: 'open-projects' });
+    document.getElementById('open-project-management').addEventListener('click', () => {
+      vscode.postMessage({ command: 'open-project-management' });
     });
     document.getElementById('create-project').addEventListener('click', () => {
       vscode.postMessage({ command: 'create-project' });
@@ -1028,8 +1035,8 @@ function createCategoryHtml(): string {
 
     function renderCategories(state) {
       categoryList.replaceChildren();
-      settingsItem.classList.toggle('is-selected', state.selectedProjectManagement);
-      openProjectsButton.setAttribute('aria-pressed', String(state.selectedProjectManagement));
+      projectManagementItem.classList.toggle('is-selected', state.selectedProjectCard);
+      openProjectManagementButton.setAttribute('aria-pressed', String(state.selectedProjectCard));
       for (let index = 0; index < categoryStages.length; index++) {
         const stage = categoryStages[index];
         const section = document.createElement('section');
